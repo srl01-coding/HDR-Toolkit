@@ -103,6 +103,10 @@ Setup as above; pattern source with `HDR Toolkit: Neutral` removed, `HDR Transfo
 | T6 | Corners outside the canvas (e.g. TL -20%,-20%) | image clipped at the output rectangle, no smearing of edge pixels | NOT RUN |
 | T7 | Transform on an SDR image source on the HLG canvas | warps correctly, colours unchanged vs no filter | NOT RUN |
 | T8 | Log: one `[transform] ... input=...` line per change; invalid geometry logs a warning | | NOT RUN |
+| T9 | Pre-warp identity: existing scene with a corner pin (schema 1 settings), new build | image unchanged; rotation 0 / distortion 0 in the UI; with *Force shader render* the scope is identical to T1 | NOT RUN |
+| T10 | Rotation 5 deg, auto-fill off, then on, on the Chart | clockwise turn about the centre; off: transparent wedges in the corners; on: wedges gone (log: fill scale about 0.87 at 16:9); lines stay straight; levels unchanged (T2 criteria) | NOT RUN |
+| T11 | Distortion +50 then -50, auto-fill on, on a grid / Chart | + bows straight lines outward (barrel), - inward (pincushion); centre unchanged; no empty edges; levels unchanged | NOT RUN |
+| T12 | Pre-warp + corner pin: rotation -3, distortion -20, trapezoid corners | corners place the rotated/corrected image (the pin acts on the pre-warped picture); invalid-quad handling as T4 still works | NOT RUN |
 
 
 ### P2 - HDR Color (global stages)

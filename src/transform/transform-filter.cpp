@@ -17,7 +17,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 /*
- * HDR Transform (hdr_toolkit_transform_v1) - P1: Corner Pin.
+ * HDR Transform (hdr_toolkit_transform_v1) - P1: Corner Pin, with a pre-warp
+ * (schema 2, user-directed 1 Nov 2026): rotation, then barrel / pincushion, both
+ * applied to the source before the corner pin (quad-math.hpp PreWarp).
  *
  * Brief section 4. Two warp models, selectable:
  *   Bilinear (StreamFX-style) - inverse-bilinear quad mapping (default)
@@ -46,9 +48,11 @@ namespace {
 
 using hdrtk::quad::BilinearUniforms;
 using hdrtk::quad::ProjectiveUniforms;
+using hdrtk::quad::PreWarp;
+using hdrtk::quad::PreWarpUniforms;
 using hdrtk::quad::Quad;
 
-constexpr int kSchemaVersion = 1;
+constexpr int kSchemaVersion = 2; // 2: pre-warp keys (neutral defaults; schema 1 unchanged)
 
 enum WarpModel : int { WarpBilinear = 0, WarpProjective = 1 };
 enum Sampling : int { SampleBilinear = 0, SamplePoint = 1 };
@@ -74,6 +78,7 @@ struct Snapshot {
 	bool force_render = false;
 	BilinearUniforms bil{};
 	ProjectiveUniforms proj{};
+	PreWarp pre; // uniforms depend on the frame size: computed at render
 };
 
 struct TransformFilter {
@@ -81,6 +86,8 @@ struct TransformFilter {
 	gs_effect_t *effect = nullptr;
 	gs_eparam_t *p_a = nullptr, *p_e = nullptr, *p_f = nullptr, *p_g = nullptr;
 	gs_eparam_t *p_h0 = nullptr, *p_h1 = nullptr, *p_h2 = nullptr, *p_wsign = nullptr;
+	gs_eparam_t *p_pre_on = nullptr, *p_pre_cs = nullptr, *p_pre_k = nullptr, *p_pre_inv_hd2 = nullptr,
+		    *p_pre_scale = nullptr, *p_pre_size = nullptr;
 
 	std::mutex mutex; // guards snapshot, last_valid, status
 	Snapshot snapshot;
@@ -90,7 +97,21 @@ struct TransformFilter {
 	// graphics thread only
 	hdrtk::RenderContext last_ctx;
 	bool have_ctx = false;
+	PreWarp pre_cached;
+	uint32_t pre_w = 0, pre_h = 0;
+	bool pre_valid = false;
+	PreWarpUniforms pre_uni{};
 };
+
+PreWarp read_prewarp(obs_data_t *s)
+{
+	PreWarp p;
+	p.rotation_deg = obs_data_get_double(s, "pre_rotation_deg");
+	p.distortion = obs_data_get_double(s, "pre_distortion");
+	p.autofill = obs_data_get_bool(s, "pre_autofill");
+	hdrtk::quad::sanitize(p);
+	return p;
+}
 
 Quad read_quad(obs_data_t *s)
 {
@@ -163,7 +184,8 @@ void transform_update(void *data, obs_data_t *settings)
 		use = Quad();
 
 	Snapshot s;
-	s.identity = hdrtk::quad::is_identity(use);
+	s.pre = read_prewarp(settings);
+	s.identity = hdrtk::quad::is_identity(use) && hdrtk::quad::prewarp_identity(s.pre);
 	s.warp = warp;
 	s.sampling = sampling;
 	s.force_render = obs_data_get_bool(settings, "force_render_identity");
@@ -195,6 +217,12 @@ void *transform_create(obs_data_t *settings, obs_source_t *source)
 		f->p_h1 = gs_effect_get_param_by_name(f->effect, "hinv1");
 		f->p_h2 = gs_effect_get_param_by_name(f->effect, "hinv2");
 		f->p_wsign = gs_effect_get_param_by_name(f->effect, "w_sign");
+		f->p_pre_on = gs_effect_get_param_by_name(f->effect, "pre_on");
+		f->p_pre_cs = gs_effect_get_param_by_name(f->effect, "pre_cs");
+		f->p_pre_k = gs_effect_get_param_by_name(f->effect, "pre_k");
+		f->p_pre_inv_hd2 = gs_effect_get_param_by_name(f->effect, "pre_inv_hd2");
+		f->p_pre_scale = gs_effect_get_param_by_name(f->effect, "pre_scale");
+		f->p_pre_size = gs_effect_get_param_by_name(f->effect, "pre_size");
 	}
 	obs_leave_graphics();
 
@@ -228,6 +256,9 @@ void transform_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "warp_model", WarpBilinear);
 	obs_data_set_default_int(settings, "sampling_mode", SampleBilinear);
 	obs_data_set_default_bool(settings, "force_render_identity", false);
+	obs_data_set_default_double(settings, "pre_rotation_deg", 0.0);
+	obs_data_set_default_double(settings, "pre_distortion", 0.0);
+	obs_data_set_default_bool(settings, "pre_autofill", true);
 	for (int i = 0; i < 4; i++) {
 		obs_data_set_default_double(settings, kCorners[i].canon_x, kIdentity[i][0]);
 		obs_data_set_default_double(settings, kCorners[i].canon_y, kIdentity[i][1]);
@@ -284,6 +315,17 @@ bool reset_clicked(obs_properties_t *props, obs_property_t *, void *data)
 	return true;
 }
 
+bool reset_prewarp_clicked(obs_properties_t *, obs_property_t *, void *data)
+{
+	auto *f = static_cast<TransformFilter *>(data);
+	obs_data_t *settings = obs_source_get_settings(f->context);
+	obs_data_set_double(settings, "pre_rotation_deg", 0.0);
+	obs_data_set_double(settings, "pre_distortion", 0.0);
+	obs_source_update(f->context, settings);
+	obs_data_release(settings);
+	return true;
+}
+
 obs_properties_t *transform_properties(void *data)
 {
 	auto *f = static_cast<TransformFilter *>(data);
@@ -301,6 +343,18 @@ obs_properties_t *transform_properties(void *data)
 	obs_property_list_add_int(p, obs_module_text("Transform.WarpModel.Bilinear"), WarpBilinear);
 	obs_property_list_add_int(p, obs_module_text("Transform.WarpModel.Projective"), WarpProjective);
 	obs_property_set_modified_callback(p, warp_modified);
+
+	// pre-warp: applied to the source before the corners (processing order top to bottom)
+	obs_properties_t *pre = obs_properties_create();
+	p = obs_properties_add_float_slider(pre, "pre_rotation_deg", obs_module_text("Transform.Pre.Rotation"),
+					    -hdrtk::quad::kRotationMax, hdrtk::quad::kRotationMax, 0.01);
+	obs_property_float_set_suffix(p, "\xC2\xB0"); // degree sign, UTF-8
+	p = obs_properties_add_float_slider(pre, "pre_distortion", obs_module_text("Transform.Pre.Distortion"),
+					    -hdrtk::quad::kDistortionMax, hdrtk::quad::kDistortionMax, 0.1);
+	obs_properties_add_bool(pre, "pre_autofill", obs_module_text("Transform.Pre.Autofill"));
+	obs_properties_add_button2(pre, "reset_prewarp", obs_module_text("Transform.Pre.Reset"), reset_prewarp_clicked,
+				   f);
+	obs_properties_add_group(props, "prewarp", obs_module_text("Transform.Pre"), OBS_GROUP_NORMAL, pre);
 
 	obs_properties_t *corners = obs_properties_create();
 	for (int k = 0; k < 4; k++) {
@@ -393,6 +447,29 @@ void transform_render(void *data, gs_effect_t *)
 	set_vec3(f->p_h1, s.proj.row1);
 	set_vec3(f->p_h2, s.proj.row2);
 	gs_effect_set_float(f->p_wsign, s.proj.w_sign);
+
+	// pre-warp uniforms depend on the source size; recomputed only when it or the
+	// settings change (the fill scale samples the frame boundary)
+	if (!f->pre_valid || f->pre_w != ctx.width || f->pre_h != ctx.height ||
+	    f->pre_cached.rotation_deg != s.pre.rotation_deg || f->pre_cached.distortion != s.pre.distortion ||
+	    f->pre_cached.autofill != s.pre.autofill) {
+		f->pre_uni = hdrtk::quad::prewarp_uniforms(s.pre, ctx.width, ctx.height);
+		f->pre_cached = s.pre;
+		f->pre_w = ctx.width;
+		f->pre_h = ctx.height;
+		f->pre_valid = true;
+		if (f->pre_uni.on > 0.5f)
+			obs_log(LOG_INFO,
+				"[transform] '%s': pre-warp rotation %.2f deg, distortion %.1f (k %.4f), fill scale %.4f, %ux%u",
+				obs_source_get_name(f->context), s.pre.rotation_deg, s.pre.distortion, f->pre_uni.k,
+				f->pre_uni.scale, ctx.width, ctx.height);
+	}
+	gs_effect_set_float(f->p_pre_on, f->pre_uni.on);
+	set_vec2(f->p_pre_cs, f->pre_uni.cs);
+	gs_effect_set_float(f->p_pre_k, f->pre_uni.k);
+	gs_effect_set_float(f->p_pre_inv_hd2, f->pre_uni.inv_hd2);
+	gs_effect_set_float(f->p_pre_scale, f->pre_uni.scale);
+	set_vec2(f->p_pre_size, f->pre_uni.size);
 
 	gs_blend_state_push();
 	gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);

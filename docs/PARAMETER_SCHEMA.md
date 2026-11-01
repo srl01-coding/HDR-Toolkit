@@ -4,11 +4,11 @@ Persisted numeric parameters only (brief 10.4). Values are validated on load
 and on every update; unknown enum values fall back to the default. Any change
 to processing order or meaning needs a new `schema_version` and a migration.
 
-## hdr_toolkit_transform_v1 (schema_version 1, P1)
+## hdr_toolkit_transform_v1 (schema_version 2: P1 corner pin + pre-warp)
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `schema_version` | int | 1 | |
+| `schema_version` | int | 2 | 1 = corner pin only. 2 adds the pre-warp keys below with neutral defaults, so schema-1 settings load unchanged (no migration). |
 | `warp_model` | int | 0 | 0 = Bilinear (StreamFX-style inverse-bilinear), 1 = Projective (homography) |
 | `corner_tl_x`, `corner_tl_y` | double | 0, 0 | **Canonical** corner A, normalised to the output rectangle (x right, y down) |
 | `corner_tr_x`, `corner_tr_y` | double | 1, 0 | corner B |
@@ -17,6 +17,15 @@ to processing order or meaning needs a new `schema_version` and a migration.
 | `ui_tl_x` ... `ui_bl_y` | double | canonical x 100 | UI mirror in percent. Written through to the canonical keys by the property callbacks; regenerated from the canonical keys on every update. Scripts should set the canonical keys. |
 | `sampling_mode` | int | 0 | 0 = bilinear, 1 = point (diagnostic) |
 | `force_render_identity` | bool | false | Diagnostic: run the shader even for the identity quad |
+| `pre_rotation_deg` | double | 0 | Pre-warp step 1 (user-directed, 1 Nov 2026): rotation of the source about the frame centre, degrees, clockwise on screen, isotropic in pixels. -180..180 |
+| `pre_distortion` | double | 0 | Pre-warp step 2: radial barrel (+) / pincushion (-), -100..100 -> k = 0.3 x value / 100. Sampling map e = s d (1 + k r^2), r = 1 at the frame corners. k >= -0.3 keeps the map monotonic (fold-free needs k > -1/3) |
+| `pre_autofill` | bool | true | Scale s = the largest view with no empty corners or edges (boundary of the frame sampled at 4 x 513 points, then 1 ppm inside); off: s = 1 |
+
+**Processing order (schema 2):** source -> rotation -> barrel/pincushion -> corner pin ->
+output. Rotation and the radial distortion are both centred on the frame and isotropic in
+pixels, so they commute: their relative order does not change the image, only that both
+come before the corner pin. With both at 0 the pre-warp is skipped (`pre_on = 0`) and the
+output is bit-identical to schema 1.
 
 Validity (brief 4.6): coordinates finite and within -4..5 (-400%..500%); no
 coincident corners (1e-4); convex in either winding (mirroring allowed);

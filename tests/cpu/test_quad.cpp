@@ -183,6 +183,106 @@ int main()
 		CHECK(vp.ok == c.ok, "projective validation of %s", c.name);
 	}
 
+	// 7. Pre-warp: rotation then barrel / pincushion (schema 2).
+	{
+		PreWarp id;
+		CHECK(prewarp_identity(id) && prewarp_uniforms(id, 3840, 2160).on == 0.0f, "pre-warp identity");
+		double su, sv;
+		// 90 degrees clockwise, square frame: the output's right shows the source's top
+		PreWarp r90;
+		r90.rotation_deg = 90;
+		r90.autofill = false;
+		CHECK(prewarp_sample(r90, 1000, 1000, 0.75, 0.5, su, sv) && std::fabs(su - 0.5) < 1e-12 &&
+			      std::fabs(sv - 0.25) < 1e-12,
+		      "rotation direction (%.6f, %.6f)", su, sv);
+		// aspect-correct: pixel distances from the centre are preserved on 16:9
+		PreWarp r30;
+		r30.rotation_deg = 30;
+		r30.autofill = false;
+		double worst_len = 0;
+		for (int i = 0; i < 200; i++) {
+			const double u = 0.3 + 0.4 * uni(rng), v = 0.3 + 0.4 * uni(rng);
+			if (!prewarp_sample(r30, 3840, 2160, u, v, su, sv))
+				continue;
+			const double a = std::hypot((u - 0.5) * 3840, (v - 0.5) * 2160);
+			const double b = std::hypot((su - 0.5) * 3840, (sv - 0.5) * 2160);
+			worst_len = std::fmax(worst_len, std::fabs(a - b));
+		}
+		CHECK(worst_len < 1e-9, "rotation not isotropic in pixels (%.3g px)", worst_len);
+		// barrel (+): sampling radius grows faster than linear; axis points stay on the axis
+		PreWarp bar;
+		bar.distortion = 100;
+		bar.autofill = false;
+		double prev = 0;
+		bool mono = true;
+		for (int i = 1; i <= 50; i++) {
+			const double u = 0.5 + 0.5 * i / 50.0;
+			prewarp_sample(bar, 3840, 2160, u, 0.5, su, sv);
+			const double ratio = (su - 0.5) / (u - 0.5);
+			mono = mono && ratio > prev && ratio >= 1.0 && std::fabs(sv - 0.5) < 1e-12;
+			prev = ratio;
+		}
+		CHECK(mono, "barrel map not monotonic outward");
+		// pincushion at -100 stays monotonic (k = -0.3 > -1/3)
+		PreWarp pin;
+		pin.distortion = -100;
+		pin.autofill = false;
+		double prev_r = -1;
+		bool mono2 = true;
+		for (int i = 0; i <= 200; i++) {
+			const double t = i / 200.0;
+			prewarp_sample(pin, 3840, 2160, 0.5 + 0.5 * t, 0.5 + 0.5 * t, su, sv);
+			const double r = std::hypot((su - 0.5) * 3840, (sv - 0.5) * 2160);
+			mono2 = mono2 && r > prev_r;
+			prev_r = r;
+		}
+		CHECK(mono2, "pincushion fold");
+		// auto-fill: every boundary point samples inside, and the scale is tight
+		const PreWarp fills[] = {{10, 0, true},   {-45, 0, true},   {0, 100, true},
+					 {0, -100, true}, {7.5, -40, true}, {180, 60, true}};
+		for (const PreWarp &f : fills) {
+			const double s = prewarp_fill_scale(f, 3840, 2160);
+			bool inside = true;
+			double margin = 1e9;
+			for (int i = 0; i <= 2000; i++) {
+				const double t = i / 2000.0;
+				const double pts[4][2] = {{t, 0}, {1, t}, {1 - t, 1}, {0, 1 - t}};
+				for (const auto &pt : pts) {
+					inside = inside && prewarp_sample(f, 3840, 2160, pt[0], pt[1], su, sv);
+					margin = std::fmin(margin,
+							   std::fmin(std::fmin(su, 1 - su), std::fmin(sv, 1 - sv)));
+				}
+			}
+			std::printf("pre-warp fill rot %.1f dist %.0f: scale %.4f, min boundary margin %.2g\n",
+				    f.rotation_deg, f.distortion, s, margin);
+			CHECK(inside && margin < 1e-4, "fill scale not tight/covering for rot %.1f dist %.0f",
+			      f.rotation_deg, f.distortion);
+		}
+		// float mirror vs double, in 4K source pixels
+		const PreWarp mix{-12.3, 55, true};
+		const PreWarpUniforms pu = prewarp_uniforms(mix, 3840, 2160);
+		double worst = 0;
+		int agree = 0, n = 0;
+		for (int i = 0; i < 20000; i++) {
+			const double u = uni(rng), v = uni(rng);
+			const bool okd = prewarp_sample(mix, 3840, 2160, u, v, su, sv);
+			const auto rf = shader_prewarp(pu, (float)u, (float)v);
+			n++;
+			if (okd != (rf[2] == 1.0f))
+				continue; // only at the boundary within tolerance
+			agree++;
+			if (okd)
+				worst = std::fmax(worst, std::fmax(std::fabs(rf[0] - su) * 3840,
+								   std::fabs(rf[1] - sv) * 2160));
+		}
+		std::printf("pre-warp float mirror: max error %.4f source px, validity agreement %d / %d\n", worst,
+			    agree, n);
+		CHECK(worst < 0.01 && agree >= n - 5, "pre-warp float mirror");
+		PreWarp bad{NAN, 1e9, true};
+		sanitize(bad);
+		CHECK(bad.rotation_deg == 0 && bad.distortion == kDistortionMax, "pre-warp sanitize");
+	}
+
 	std::printf(failures ? "RESULT: FAIL (%d)\n" : "RESULT: PASS\n", failures);
 	return failures ? 1 : 0;
 }

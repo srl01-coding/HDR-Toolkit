@@ -91,5 +91,46 @@ bool projective_uniforms(const Quad &q, ProjectiveUniforms &out);
 std::array<float, 3> shader_inverse_bilinear(const BilinearUniforms &uni, float px, float py);
 std::array<float, 3> shader_inverse_projective(const ProjectiveUniforms &uni, float px, float py);
 
+// ---- Pre-warp (user-directed, 1 Nov 2026): rotation, then barrel / pincushion, then
+// the corner pin. docs/PARAMETER_SCHEMA.md (schema 2). Both are centred on the frame
+// and isotropic in pixels, so they commute; only their place before the corner pin
+// matters. The functions below are the *sampling* map: a point (u, v) of the
+// pre-warped image (what the corner pin sees as its source square) -> the source
+// texture coordinate it shows.
+//   d   = ((u - 0.5) W, (v - 0.5) H)                pixels from the centre
+//   r^2 = |d|^2 / (W^2 + H^2) * 4                   1 at the frame corners
+//   e   = s d (1 + k r^2)                           k > 0: barrel, k < 0: pincushion
+//   q   = R(-theta) e                               theta > 0: clockwise on screen
+//   (su, sv) = q / (W, H) + 0.5
+// s is the fill scale (1, or the largest view with no empty edges or corners).
+struct PreWarp {
+	double rotation_deg = 0.0; // -180..180, clockwise on screen
+	double distortion = 0.0;   // -100..100: + barrel (lines bow outward), - pincushion
+	bool autofill = true;      // scale to fill the frame
+};
+constexpr double kRotationMax = 180.0;
+constexpr double kDistortionMax = 100.0;
+constexpr double kDistortionK = 0.3; // |k| at |distortion| = 100; k > -1/3 keeps the map monotonic
+
+void sanitize(PreWarp &p);
+bool prewarp_identity(const PreWarp &p);
+double distortion_k(const PreWarp &p);
+// Fill scale s for a W x H frame (1 when autofill is off).
+double prewarp_fill_scale(const PreWarp &p, double w, double h);
+// Double reference of the sampling map; false when the point falls outside the source.
+bool prewarp_sample(const PreWarp &p, double w, double h, double u, double v, double &su, double &sv);
+
+struct PreWarpUniforms {
+	float on;      // 0 = skip (corner pin only, bit-identical to schema 1)
+	float cs[2];   // cos, sin of theta
+	float k;       // radial coefficient
+	float inv_hd2; // 4 / (W^2 + H^2)
+	float scale;   // fill scale
+	float size[2]; // W, H in pixels
+};
+PreWarpUniforms prewarp_uniforms(const PreWarp &p, double w, double h);
+// Float mirror of pre_warp() in data/effects/hdr-transform.effect: (su, sv, valid).
+std::array<float, 3> shader_prewarp(const PreWarpUniforms &uni, float u, float v);
+
 } // namespace quad
 } // namespace hdrtk

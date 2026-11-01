@@ -438,5 +438,126 @@ std::array<float, 3> shader_inverse_projective(const ProjectiveUniforms &uni, fl
 	return {u, v, 1};
 }
 
+// ---- pre-warp ---------------------------------------------------------------------
+
+void sanitize(PreWarp &p)
+{
+	if (!std::isfinite(p.rotation_deg))
+		p.rotation_deg = 0.0;
+	if (!std::isfinite(p.distortion))
+		p.distortion = 0.0;
+	p.rotation_deg = std::clamp(p.rotation_deg, -kRotationMax, kRotationMax);
+	p.distortion = std::clamp(p.distortion, -kDistortionMax, kDistortionMax);
+}
+
+bool prewarp_identity(const PreWarp &p)
+{
+	return p.rotation_deg == 0.0 && p.distortion == 0.0;
+}
+
+double distortion_k(const PreWarp &p)
+{
+	return kDistortionK * p.distortion / kDistortionMax;
+}
+
+namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+
+// Unscaled sampling vector for pixel offset d (pixels from the centre).
+Vec2 prewarp_vector(double k, double c, double sn, double inv_hd2, Vec2 d)
+{
+	const double r2 = (d.x * d.x + d.y * d.y) * inv_hd2;
+	const Vec2 e = mul(d, 1.0 + k * r2);
+	return {c * e.x + sn * e.y, -sn * e.x + c * e.y};
+}
+
+} // namespace
+
+double prewarp_fill_scale(const PreWarp &p, double w, double h)
+{
+	if (!p.autofill || prewarp_identity(p) || !(w > 0) || !(h > 0))
+		return 1.0;
+	const double th = p.rotation_deg * kPi / 180.0;
+	const double c = std::cos(th), sn = std::sin(th), k = distortion_k(p);
+	const double inv_hd2 = 4.0 / (w * w + h * h);
+	// The map is radial-monotonic (k > -1/3) composed with a rotation, so the frame is
+	// covered iff its boundary is: the largest s that keeps every boundary sample inside.
+	double s = 1e30;
+	const int n = 512;
+	for (int edge = 0; edge < 4; edge++)
+		for (int i = 0; i <= n; i++) {
+			const double t = (double)i / n;
+			Vec2 d;
+			switch (edge) {
+			case 0:
+				d = {(t - 0.5) * w, -0.5 * h};
+				break;
+			case 1:
+				d = {0.5 * w, (t - 0.5) * h};
+				break;
+			case 2:
+				d = {(0.5 - t) * w, 0.5 * h};
+				break;
+			default:
+				d = {-0.5 * w, (0.5 - t) * h};
+				break;
+			}
+			const Vec2 q = prewarp_vector(k, c, sn, inv_hd2, d);
+			if (std::fabs(q.x) > 1e-12)
+				s = std::min(s, 0.5 * w / std::fabs(q.x));
+			if (std::fabs(q.y) > 1e-12)
+				s = std::min(s, 0.5 * h / std::fabs(q.y));
+		}
+	// boundary sampled at 4 x 513 points: shrink by 1 ppm so the gaps between samples
+	// cannot reach outside the source
+	return s < 1e29 ? s * (1.0 - 1e-6) : 1.0;
+}
+
+bool prewarp_sample(const PreWarp &p, double w, double h, double u, double v, double &su, double &sv)
+{
+	const double th = p.rotation_deg * kPi / 180.0;
+	const double inv_hd2 = 4.0 / (w * w + h * h);
+	const double s = prewarp_fill_scale(p, w, h);
+	const Vec2 q = mul(prewarp_vector(distortion_k(p), std::cos(th), std::sin(th), inv_hd2,
+					  {(u - 0.5) * w, (v - 0.5) * h}),
+			   s);
+	su = q.x / w + 0.5;
+	sv = q.y / h + 0.5;
+	const double tol = 1e-9;
+	return su >= -tol && su <= 1.0 + tol && sv >= -tol && sv <= 1.0 + tol;
+}
+
+PreWarpUniforms prewarp_uniforms(const PreWarp &p, double w, double h)
+{
+	PreWarpUniforms u{};
+	const double th = p.rotation_deg * kPi / 180.0;
+	u.on = prewarp_identity(p) ? 0.0f : 1.0f;
+	u.cs[0] = (float)std::cos(th);
+	u.cs[1] = (float)std::sin(th);
+	u.k = (float)distortion_k(p);
+	u.inv_hd2 = (float)(4.0 / (w * w + h * h));
+	u.scale = (float)prewarp_fill_scale(p, w, h);
+	u.size[0] = (float)w;
+	u.size[1] = (float)h;
+	return u;
+}
+
+std::array<float, 3> shader_prewarp(const PreWarpUniforms &uni, float u, float v)
+{
+	u = std::clamp(u, 0.0f, 1.0f); // the shader clamps the corner-pin result first
+	v = std::clamp(v, 0.0f, 1.0f);
+	const float dx = (u - 0.5f) * uni.size[0], dy = (v - 0.5f) * uni.size[1];
+	const float r2 = (dx * dx + dy * dy) * uni.inv_hd2;
+	const float f = (1.0f + uni.k * r2) * uni.scale;
+	const float ex = dx * f, ey = dy * f;
+	const float sx = uni.cs[0] * ex + uni.cs[1] * ey;
+	const float sy = -uni.cs[1] * ex + uni.cs[0] * ey;
+	const float qx = sx / uni.size[0] + 0.5f, qy = sy / uni.size[1] + 0.5f;
+	if (!(qx >= -kShaderUvTol && qx <= 1.0f + kShaderUvTol && qy >= -kShaderUvTol && qy <= 1.0f + kShaderUvTol))
+		return {0, 0, 0};
+	return {qx, qy, 1};
+}
+
 } // namespace quad
 } // namespace hdrtk

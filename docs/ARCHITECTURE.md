@@ -11,7 +11,7 @@ sharing a small colour/rendering support layer:
 
 | Filter | ID (stable) | Status |
 |---|---|---|
-| HDR Transform | `hdr_toolkit_transform_v1` | P1 Corner Pin (bilinear + projective) implemented; 3D modes, edge AA, mipmapping in P4 |
+| HDR Transform | `hdr_toolkit_transform_v1` | P1 Corner Pin (bilinear + projective) implemented; pre-warp rotation + barrel/pincushion before the corners (schema 2, user-directed); 3D modes, edge AA, mipmapping in P4 |
 | HDR Color | `hdr_toolkit_color_v1` | P2 global stages (WB, exposure, contrast, wheel, saturation, Grade Mix) P3 six tonal zones (frozen masks, open ends, mask diagnostic), linear offset (user-directed) and low/high soft clip implemented; wheel UI and gamut containment in P5 |
 
 Developer-only objects present in P0:

@@ -24,7 +24,8 @@ Program denoise: `docs/denoise/BRIEF_v1.2.md` governs (its own P0-P5); design no
 
 ## Status
 P0 done (G0, N1 qualitative, N3b observed in OBS 32.2.2). P1 Corner Pin implemented
-(transform-filter.cpp; shader mirrored in quad-math.cpp - keep in lock-step). P2 global Color
+(transform-filter.cpp; shader mirrored in quad-math.cpp - keep in lock-step). Pre-warp (1 Nov, user): rotation then barrel/pincushion
+before the corners, schema 2 (quad-math PreWarp, shader pre_warp() mirrored by shader_prewarp - lock-step; T9-T12). P2 global Color
 implemented (color-filter.cpp; hdr-color.effect mirrored in color-math.cpp shader_grade - keep in
 lock-step). P3 tonal zones implemented; user-directed changes (4 Oct): seven zones
 (Midtones added), handover chain Dark..Highlight at -4/-1/+1/+3 (weights sum to 1), Specular full

@@ -24,6 +24,15 @@ uniform float3 hinv1;
 uniform float3 hinv2;
 uniform float w_sign = 1.0;
 
+// Pre-warp (schema 2): rotation, then barrel / pincushion, before the corner pin.
+// Sampling map, mirrored in quad-math.cpp shader_prewarp(). pre_on = 0 skips it.
+uniform float pre_on = 0.0;
+uniform float2 pre_cs = {1.0, 0.0};      // cos, sin of the clockwise rotation
+uniform float pre_k = 0.0;               // radial coefficient (+ barrel, - pincushion)
+uniform float pre_inv_hd2 = 0.0;         // 4 / (W^2 + H^2)
+uniform float pre_scale = 1.0;           // fill scale
+uniform float2 pre_size = {1920.0, 1080.0};
+
 sampler_state linear_sampler {
 	Filter   = Linear;
 	AddressU = Clamp;
@@ -136,11 +145,33 @@ float3 inverse_projective(float2 p)
 	return float3(0.0, 0.0, 0.0);
 }
 
+// Returns (u, v, valid) in the source texture for a point of the pre-warped image.
+float3 pre_warp(float2 uv)
+{
+	float uv_tol = 0.00001;
+	float2 d = (uv - float2(0.5, 0.5)) * pre_size;
+	float r2 = dot(d, d) * pre_inv_hd2;
+	float2 e = d * ((1.0 + pre_k * r2) * pre_scale);
+	float2 s = float2(pre_cs.x * e.x + pre_cs.y * e.y, -pre_cs.y * e.x + pre_cs.x * e.y);
+	float2 q = s / pre_size + float2(0.5, 0.5);
+	if (q.x >= -uv_tol && q.x <= 1.0 + uv_tol && q.y >= -uv_tol && q.y <= 1.0 + uv_tol)
+		return float3(q, 1.0);
+	return float3(0.0, 0.0, 0.0);
+}
+
+// Corner pin, then (when on) the pre-warp sampling map.
+float3 full_map(float3 m)
+{
+	if (m.z < 0.5 || pre_on < 0.5)
+		return m;
+	return pre_warp(clamp(m.xy, 0.0, 1.0));
+}
+
 // Valid UVs are clamped by the tolerance only; invalid ones never sample, so
 // edge pixels are not smeared outside the quad.
 float4 PSBilinearLinear(VertInOut vert_in) : TARGET
 {
-	float3 m = inverse_bilinear(vert_in.uv);
+	float3 m = full_map(inverse_bilinear(vert_in.uv));
 	if (m.z < 0.5)
 		return float4(0.0, 0.0, 0.0, 0.0);
 	return image.Sample(linear_sampler, clamp(m.xy, 0.0, 1.0));
@@ -148,7 +179,7 @@ float4 PSBilinearLinear(VertInOut vert_in) : TARGET
 
 float4 PSBilinearPoint(VertInOut vert_in) : TARGET
 {
-	float3 m = inverse_bilinear(vert_in.uv);
+	float3 m = full_map(inverse_bilinear(vert_in.uv));
 	if (m.z < 0.5)
 		return float4(0.0, 0.0, 0.0, 0.0);
 	return image.Sample(point_sampler, clamp(m.xy, 0.0, 1.0));
@@ -156,7 +187,7 @@ float4 PSBilinearPoint(VertInOut vert_in) : TARGET
 
 float4 PSProjectiveLinear(VertInOut vert_in) : TARGET
 {
-	float3 m = inverse_projective(vert_in.uv);
+	float3 m = full_map(inverse_projective(vert_in.uv));
 	if (m.z < 0.5)
 		return float4(0.0, 0.0, 0.0, 0.0);
 	return image.Sample(linear_sampler, clamp(m.xy, 0.0, 1.0));
@@ -164,7 +195,7 @@ float4 PSProjectiveLinear(VertInOut vert_in) : TARGET
 
 float4 PSProjectivePoint(VertInOut vert_in) : TARGET
 {
-	float3 m = inverse_projective(vert_in.uv);
+	float3 m = full_map(inverse_projective(vert_in.uv));
 	if (m.z < 0.5)
 		return float4(0.0, 0.0, 0.0, 0.0);
 	return image.Sample(point_sampler, clamp(m.xy, 0.0, 1.0));
