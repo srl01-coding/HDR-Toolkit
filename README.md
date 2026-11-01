@@ -3,15 +3,19 @@
 HDR-safe video filters for OBS Studio, working in OBS's linear HDR space without
 8-bit intermediates or hidden clamps:
 
-* **HDR Transform** - four-corner pin, bilinear (StreamFX-style) or projective.
-  3D modes are planned.
+* **HDR Transform** - four-corner pin, bilinear (StreamFX-style) or projective, with
+  rotation and barrel / pincushion correction applied to the source before the corners,
+  and an optional scale-to-fill so no empty corners or edges show. 3D modes are planned.
 * **HDR Color** - white balance (temperature / tint), exposure, contrast and pivot,
   saturation, colour-balance wheel, seven tonal zones, linear offset, Grade Mix,
   and low / high soft clip.
 
 * **HDR Denoise** (source filter) and **HDR Program Denoise** (Tools menu), in
   development: HQDN3D-style spatial + temporal denoise in OBS's HDR working space (an
-  independent implementation), with scene-cut reset and transition protection.
+  independent implementation), with scene-cut reset and transition protection,
+  strengths from subtle to fully "plastic" (0-100), debug views (what was removed,
+  temporal weight), and **Measure noise**: point the camera at a static shot and the
+  filter measures its noise floor and sets the comparison knee to match.
 
   **Placement.**
   - For the highest denoise quality, add *HDR Denoise* directly to each camera source,
@@ -28,9 +32,10 @@ Developer tools in the same package: **HDR Toolkit: Test Pattern (developer)**
 wide-gamut colours, alpha fixtures; no video decode) and **HDR Toolkit: Neutral
 (developer test)** (a real HDR shader that must leave the image unchanged).
 
-**Status: development build.** Do not install into a production OBS profile.
-`docs/VALIDATION.md` lists what has been verified (CPU maths, builds) and what
-is still NOT RUN in OBS.
+**Status: beta.** Windows x64, tested with OBS 32.2.2 on a Rec.2100 HLG canvas; the
+macOS and Linux packages build but are untested. Try it in a separate profile or scene
+collection before using it live. `docs/VALIDATION.md` lists what has been verified
+(CPU maths, builds) and what is still NOT RUN in OBS.
 
 ## HDR Color: tonal zones
 
@@ -62,11 +67,12 @@ down to true black) and at code 1023, OBS's HLG encode ceiling.
 * Every range, open end and fade is adjustable per zone; *Advanced > Diagnostic
   view* shows one zone's mask or all zones in false colour.
 
-## Install (Windows, test profile)
+## Install (Windows)
 
-1. Download the `obs-hdr-toolkit-<version>-windows-x64-<commit>` artifact from
-   the latest successful *Push* run under **Actions**, and unzip it (it contains
-   a second zip; unzip that too).
+1. Download `obs-hdr-toolkit-<version>-windows-x64.zip` from
+   [Releases](https://github.com/srl01-coding/OBS-HDRtools/releases) and unzip it.
+   (Development builds: the `...-windows-x64-<commit>` artifact of a successful *Push*
+   run under **Actions**; it contains a second zip, unzip that too.)
 2. Close OBS. Copy the `obs-hdr-toolkit` folder (containing `bin\64bit\obs-hdr-toolkit.dll`
    and `data\`) into `C:\ProgramData\obs-studio\plugins\`. **Create the `obs-studio\plugins`
    folders if they do not exist** (they don't on a fresh install; `ProgramData` is hidden).
