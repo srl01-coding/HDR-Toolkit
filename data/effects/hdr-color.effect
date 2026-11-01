@@ -1,4 +1,4 @@
-// OBS HDR Toolkit - HDR Color (hdr_toolkit_color_v1): global stages + tonal zones
+// HDR Toolkit - HDR Color (hdr_toolkit_color_v1): global stages + tonal zones
 // Copyright (C) 2026 srl01-coding, GPL-2.0-or-later
 //
 // Brief sections 5-7. The nits-domain body of PSGrade is mirrored line for

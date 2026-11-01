@@ -1,12 +1,12 @@
 # Architecture
 
-Status: P0 (HDR plumbing). Governing spec: *OBS HDR Toolkit: implementation brief for
+Status: P0 (HDR plumbing). Governing spec: *HDR Toolkit: implementation brief for
 Claude Code*, v1.0, 3 Oct 2026 (referred to below as "the brief"; section numbers
 refer to it).
 
 ## Product
 
-One OBS plugin package (`obs-hdr-toolkit`) with two production video filters,
+One OBS plugin package (`hdr-toolkit`) with two production video filters,
 sharing a small colour/rendering support layer:
 
 | Filter | ID (stable) | Status |
@@ -86,7 +86,7 @@ allocation, no CPU readback in the render path.
 
 CI only (no local OBS/Windows toolchain in the authoring environment):
 GitHub Actions from the template, triggered on push to `main`. Artifacts:
-`obs-hdr-toolkit-<version>-windows-x64*`. CPU tests run anywhere:
+`hdr-toolkit-<version>-windows-x64*`. CPU tests run anywhere:
 
 ```sh
 g++ -std=c++17 -O2 -Isrc tests/cpu/test_pattern.cpp src/pattern/pattern-math.cpp -o test_pattern && ./test_pattern

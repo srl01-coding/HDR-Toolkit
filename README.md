@@ -1,4 +1,4 @@
-# OBS HDR Toolkit
+# HDR Toolkit
 
 HDR-safe video filters for OBS Studio, working in OBS's linear HDR space without
 8-bit intermediates or hidden clamps:
@@ -69,17 +69,23 @@ down to true black) and at code 1023, OBS's HLG encode ceiling.
 
 ## Install (Windows)
 
-1. Download `obs-hdr-toolkit-<version>-windows-x64.zip` from
-   [Releases](https://github.com/srl01-coding/OBS-HDRtools/releases) and unzip it.
+1. Download `hdr-toolkit-<version>-windows-x64.zip` from
+   [Releases](https://github.com/srl01-coding/HDR-Toolkit/releases) and unzip it.
    (Development builds: the `...-windows-x64-<commit>` artifact of a successful *Push*
    run under **Actions**; it contains a second zip, unzip that too.)
-2. Close OBS. Copy the `obs-hdr-toolkit` folder (containing `bin\64bit\obs-hdr-toolkit.dll`
+2. Close OBS. Copy the `hdr-toolkit` folder (containing `bin\64bit\hdr-toolkit.dll`
    and `data\`) into `C:\ProgramData\obs-studio\plugins\`. **Create the `obs-studio\plugins`
    folders if they do not exist** (they don't on a fresh install; `ProgramData` is hidden).
    Alternative, Program Files layout (the folder structure is different):
-   `bin\64bit\obs-hdr-toolkit.dll` -> `C:\Program Files\obs-studio\obs-plugins\64bit\`, and the
-   *contents* of `data\` -> `C:\Program Files\obs-studio\data\obs-plugins\obs-hdr-toolkit\`.
-3. To uninstall, delete `C:\ProgramData\obs-studio\plugins\obs-hdr-toolkit`.
+   `bin\64bit\hdr-toolkit.dll` -> `C:\Program Files\obs-studio\obs-plugins\64bit\`, and the
+   *contents* of `data\` -> `C:\Program Files\obs-studio\data\obs-plugins\hdr-toolkit\`.
+3. To uninstall, delete `C:\ProgramData\obs-studio\plugins\hdr-toolkit`.
+
+**Upgrading from a build named `obs-hdr-toolkit`** (before 1 Nov 2026): delete the old
+`obs-hdr-toolkit` folder (and `obs-hdr-toolkit.dll` / `data\obs-plugins\obs-hdr-toolkit`
+in the Program Files layout) before installing. Both register the same filters and must not
+be loaded together. Scenes keep their filters and settings (the filter IDs are unchanged),
+and HDR Program Denoise copies its saved settings from the old plugin folder on first start.
 
 This location is separate from the OBS install folder, so it does not touch
 other plugins.

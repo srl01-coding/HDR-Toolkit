@@ -1,4 +1,4 @@
-// OBS HDR Toolkit - program denoise
+// HDR Toolkit - program denoise
 // Copyright (C) 2026 srl01-coding, GPL-2.0-or-later
 //
 // Runs on the finished program frame (OBS main texture, native canvas space,

@@ -33,13 +33,13 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "io.github.srl01-coding.obs-hdr-toolkit"
+            "bundleId": "io.github.srl01-coding.hdr-toolkit"
         }
     },
-    "name": "obs-hdr-toolkit",
-    "displayName": "OBS HDR Toolkit",
+    "name": "hdr-toolkit",
+    "displayName": "HDR Toolkit",
     "version": "0.1.0",
     "author": "srl01-coding",
-    "website": "https://github.com/srl01-coding/OBS-HDRtools",
+    "website": "https://github.com/srl01-coding/HDR-Toolkit",
     "email": "srl01-coding@users.noreply.github.com"
 }

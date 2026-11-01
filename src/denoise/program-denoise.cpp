@@ -1,5 +1,5 @@
 /*
-OBS HDR Toolkit
+HDR Toolkit
 Copyright (C) 2026 srl01-coding
 
 This program is free software; you can redistribute it and/or modify
@@ -493,14 +493,42 @@ extern "C" void hdrtk_denoise_load(void)
 	obs_log(LOG_INFO, "[denoise] program hook registered (once per unique main-canvas frame)");
 }
 
+// Settings saved by the plugin under its former package name (obs-hdr-toolkit, renamed
+// hdr-toolkit on 1 Nov 2026): <plugin_config>/obs-hdr-toolkit/program-denoise.json.
+obs_data_t *load_legacy_settings()
+{
+	char *dir = obs_module_config_path("");
+	if (!dir)
+		return nullptr;
+	std::string base(dir);
+	bfree(dir);
+	while (!base.empty() && (base.back() == '/' || base.back() == '\\'))
+		base.pop_back();
+	const size_t cut = base.find_last_of("/\\");
+	if (cut == std::string::npos)
+		return nullptr;
+	const std::string legacy = base.substr(0, cut + 1) + "obs-hdr-toolkit/" + kConfigFile;
+	if (!os_file_exists(legacy.c_str()))
+		return nullptr;
+	obs_data_t *s = obs_data_create_from_json_file_safe(legacy.c_str(), "bak");
+	if (s) {
+		obs_log(LOG_INFO, "[denoise] settings migrated from %s", legacy.c_str());
+		save_settings(s); // to the new location; the old file is left untouched
+	}
+	return s;
+}
+
 // Create the controller after all modules are loaded (settings from the config file).
 extern "C" void hdrtk_denoise_post_load(void)
 {
 	if (!g || g->controller)
 		return;
 	char *file = obs_module_config_path(kConfigFile);
-	obs_data_t *settings = file ? obs_data_create_from_json_file_safe(file, "bak") : nullptr;
+	obs_data_t *settings = file && os_file_exists(file) ? obs_data_create_from_json_file_safe(file, "bak")
+							    : nullptr;
 	bfree(file);
+	if (!settings)
+		settings = load_legacy_settings();
 	if (!settings)
 		settings = obs_data_create();
 	obs_source_t *src = obs_source_create_private(kSourceId, "HDR Program Denoise", settings);

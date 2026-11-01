@@ -1,4 +1,4 @@
-// OBS HDR Toolkit - P0 neutral filter (hdr_toolkit_neutral_dev)
+// HDR Toolkit - P0 neutral filter (hdr_toolkit_neutral_dev)
 // Copyright (C) 2026 srl01-coding, GPL-2.0-or-later
 //
 // Input `image` is the filter texrender: premultiplied linear RGB in the

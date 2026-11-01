@@ -1,5 +1,5 @@
 /*
-OBS HDR Toolkit
+HDR Toolkit
 Copyright (C) 2026 srl01-coding
 
 This program is free software; you can redistribute it and/or modify

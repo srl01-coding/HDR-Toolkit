@@ -1,5 +1,5 @@
 /* Minimal CUDA driver API type declarations for the vendored NVOF headers.
- * OBS HDR Toolkit, GPL-2.0-or-later. Opaque handles only; the real API is loaded at
+ * HDR Toolkit, GPL-2.0-or-later. Opaque handles only; the real API is loaded at
  * runtime from nvcuda.dll (src/denoise/nvof-probe.cpp). */
 #pragma once
 #include <stdint.h>

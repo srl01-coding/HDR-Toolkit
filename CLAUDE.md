@@ -1,7 +1,7 @@
-# OBS HDR Toolkit - working notes for Claude
+# HDR Toolkit - working notes for Claude
 
 Governing spec: *OBS HDR Toolkit: implementation brief for Claude Code* v1.0
-(3 Oct 2026). It supersedes earlier conversations. Work packages P0-P5 (brief 12.1).
+(3 Oct 2026; project renamed "HDR Toolkit", package hdr-toolkit, on 1 Nov - OBS forum naming policy). It supersedes earlier conversations. Work packages P0-P5 (brief 12.1).
 Program denoise: `docs/denoise/BRIEF_v1.2.md` governs (its own P0-P5); design notes in
 `docs/denoise/DENOISE.md`. HQDN3D must be written independently from
 `docs/HQDN3D_DESIGN.md` - never copy/port FFmpeg/MPlayer code (brief 28).
@@ -61,4 +61,6 @@ noise-normalised removal view; do not combine K~8 with the measured profile (KN-
 (history_beta, RGBA32F history above 20); SR-1.
 10 Oct (user): live noise measurement in HDR Denoise (noise-meter*.cpp, SampleGrid, NOISE_MEASUREMENT.md);
 Apply sets knee + identity profile; knee range 0.01-50; label "Noise floor (comparison knee)"; NM-1.
+1 Nov: renamed to HDR Toolkit (package/DLL hdr-toolkit, repo to become HDR-Toolkit); filter IDs unchanged;
+Program Denoise migrates its config from plugin_config/obs-hdr-toolkit. Historical docs/denoise briefs keep the old name.
 Windows compile check: python3 -m ziglang c++ -target x86_64-windows-gnu -c FILE -o out.o.
