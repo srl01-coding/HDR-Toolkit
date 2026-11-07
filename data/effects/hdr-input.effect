@@ -1,0 +1,71 @@
+// HDR Toolkit - HDR Input (hdr_toolkit_input_v1): reinterpret an SDR-decoded HLG signal
+// Copyright (C) 2026 srl01-coding, GPL-2.0-or-later
+//
+// A capture source that delivers HLG without HDR metadata is decoded by OBS as SDR:
+// V = srgb_decode(E'). This pass undoes that with OBS's own formula and applies OBS's own
+// HLG decode (libobs format_conversion.effect PSV210_HLG_2020_709_Reverse, color.effect
+// hlg_to_linear / rec2020_to_rec709), so the result is what OBS produces for a correctly
+// tagged HLG frame. Mirrored in src/input/input-math.cpp reinterpret_f() - keep in lock-step.
+// Output: premultiplied linear Rec.709 in GS_CS_709_EXTENDED. No clamp.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 out_size;
+
+uniform float3 corr0 = {1.0, 0.0, 0.0}; // matrix correction rows (identity for Rec.2020)
+uniform float3 corr1 = {0.0, 1.0, 0.0};
+uniform float3 corr2 = {0.0, 0.0, 1.0};
+uniform float hlg_exp = 0.2;            // 0.2 + 0.42 log10(peak / 1000), as libobs
+uniform float max_over_sdr = 4.926;     // peak / SDR white, as libobs
+
+struct VertInOut {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertInOut VSDefault(VertInOut vert_in)
+{
+	VertInOut vert_out;
+	vert_out.pos = mul(float4(vert_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = vert_in.uv;
+	return vert_out;
+}
+
+float srgb_encode_ch(float u)
+{
+	return (u <= 0.0031308) ? (12.92 * u) : ((1.055 * pow(u, 1.0 / 2.4)) - 0.055);
+}
+
+float hlg_eotf_ch(float u)
+{
+	float ln2_i = 1.0 / log(2.0);
+	float m = ln2_i / 0.17883277;
+	float a = -ln2_i * 0.55991073 / 0.17883277;
+	return (u <= 0.5) ? ((u * u) / 3.0) : ((exp2(u * m + a) + 0.28466892) / 12.0);
+}
+
+float4 PSReinterpretHLG(VertInOut vert_in) : TARGET
+{
+	int2 p = int2(vert_in.uv * out_size);
+	float4 c = image.Load(int3(p, 0));
+	float3 v = c.a > 0.0 ? c.rgb / c.a : float3(0.0, 0.0, 0.0);
+	float3 e = float3(srgb_encode_ch(v.r), srgb_encode_ch(v.g), srgb_encode_ch(v.b));
+	float3 h = float3(dot(corr0, e), dot(corr1, e), dot(corr2, e));
+	float3 l = float3(hlg_eotf_ch(h.r), hlg_eotf_ch(h.g), hlg_eotf_ch(h.b));
+	float ys = dot(l, float3(0.2627, 0.678, 0.0593));
+	l *= pow(ys, hlg_exp) * max_over_sdr;
+	float3 o;
+	o.r = dot(l, float3(1.6604910021084345, -0.58764113878854951, -0.072849863319884883));
+	o.g = dot(l, float3(-0.12455047452159074, 1.1328998971259603, -0.0083494226043694768));
+	o.b = dot(l, float3(-0.018150763354905303, -0.10057889800800739, 1.1187296613629127));
+	return float4(o * c.a, c.a);
+}
+
+technique ReinterpretHLG
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSReinterpretHLG(vert_in);
+	}
+}

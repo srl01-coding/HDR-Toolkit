@@ -65,4 +65,7 @@ Apply sets knee + identity profile; knee range 0.01-50; label "Noise floor (comp
 Program Denoise migrates its config from plugin_config/obs-hdr-toolkit. Historical docs/denoise briefs keep the old name.
 7 Nov (user): HDR Sharpen (src/sharpen, hdr-sharpen.effect mirrored by sharpen_f - lock-step; docs/SHARPEN.md;
 SH-1..4). Shared capture/draw in src/shared/filter-io (denoise filter uses it too).
+7 Nov (user): HDR Input (src/input; hdr-input.effect mirrored by reinterpret_f - lock-step; docs/HDR_INPUT.md;
+IN-1..4). The ONE sanctioned HLG decode: undo OBS's sRGB decode of SDR-tagged HLG and apply OBS's own HLG decode.
+Signal analysis rebuilds Y' codes, lattice coherence 6-10 bit (SignalMeter uses denoise sample_grid).
 Windows compile check: python3 -m ziglang c++ -target x86_64-windows-gnu -c FILE -o out.o.

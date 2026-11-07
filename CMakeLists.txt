@@ -42,6 +42,11 @@ target_sources(
     src/shared/filter-io.hpp
     src/shared/obs-color-context.cpp
     src/shared/obs-color-context.hpp
+    src/input/input-filter.cpp
+    src/input/input-math.cpp
+    src/input/input-math.hpp
+    src/input/signal-meter.cpp
+    src/input/signal-meter.hpp
     src/sharpen/sharpen-filter.cpp
     src/sharpen/sharpen-math.cpp
     src/sharpen/sharpen-math.hpp
