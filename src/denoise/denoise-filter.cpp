@@ -36,6 +36,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "denoise-core.hpp"
 #include "noise-meter.hpp"
 
+#include "shared/filter-io.hpp"
 #include "shared/obs-color-context.hpp"
 
 #include <obs-module.h>
@@ -71,8 +72,7 @@ struct DenoiseFilter {
 	// graphics thread only
 	dn::Core core;
 	dn::NoiseMeter meter;
-	gs_texrender_t *input = nullptr;
-	enum gs_color_format input_format = GS_UNKNOWN;
+	hdrtk::FilterInput input;
 	bool have_ctx = false;
 	hdrtk::RenderContext last_ctx;
 	bool have_time = false;
@@ -128,7 +128,7 @@ void filter_destroy(void *data)
 	obs_enter_graphics();
 	f->core.free_all();
 	f->meter.free();
-	gs_texrender_destroy(f->input);
+	f->input.destroy();
 	obs_leave_graphics();
 	delete f;
 }
@@ -247,56 +247,14 @@ void log_counters(DenoiseFilter *f, const dn::CoreSettings &s, const char *why)
 		f->core.width(), f->core.height(), timing.c_str(), metric.c_str(), f->core.vram_mib(), verdict);
 }
 
-// Draw `tex` into the current target the way libobs draws a filter result
-// (obs_source_process_filter_tech_end / render_filter_tex), premultiplied.
 void draw_result(gs_texture_t *tex)
 {
-	gs_effect_t *e = obs_get_base_effect(OBS_EFFECT_DEFAULT);
-	gs_eparam_t *image = gs_effect_get_param_by_name(e, "image");
-	const bool prev_linear = gs_set_linear_srgb(true); // OBS_SOURCE_SRGB filter
-	const bool linear_srgb = gs_get_linear_srgb();
-	const bool prev_fb = gs_framebuffer_srgb_enabled();
-	gs_enable_framebuffer_srgb(linear_srgb);
-	if (linear_srgb)
-		gs_effect_set_texture_srgb(image, tex);
-	else
-		gs_effect_set_texture(image, tex);
-	gs_blend_state_push();
-	gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
-	while (gs_effect_loop(e, "Draw"))
-		gs_draw_sprite(tex, 0, gs_texture_get_width(tex), gs_texture_get_height(tex));
-	gs_blend_state_pop();
-	gs_enable_framebuffer_srgb(prev_fb);
-	gs_set_linear_srgb(prev_linear);
+	hdrtk::draw_filter_result(tex);
 }
 
-// Render the filter input (everything before this filter) into f->input, as libobs
-// does for filters (obs_source_process_filter_begin_with_color_space).
 gs_texture_t *capture_input(DenoiseFilter *f, const hdrtk::RenderContext &ctx)
 {
-	if (f->input && f->input_format != ctx.staging_format) {
-		gs_texrender_destroy(f->input);
-		f->input = nullptr;
-	}
-	if (!f->input) {
-		f->input = gs_texrender_create(ctx.staging_format, GS_ZS_NONE);
-		f->input_format = ctx.staging_format;
-	}
-	if (!f->input)
-		return nullptr;
-	gs_texrender_reset(f->input);
-	if (!gs_texrender_begin_with_color_space(f->input, ctx.width, ctx.height, ctx.input_space))
-		return nullptr;
-	gs_blend_state_push();
-	gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
-	struct vec4 clear_color;
-	vec4_zero(&clear_color);
-	gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
-	gs_ortho(0.0f, (float)ctx.width, 0.0f, (float)ctx.height, -100.0f, 100.0f);
-	obs_source_skip_video_filter(f->context);
-	gs_blend_state_pop();
-	gs_texrender_end(f->input);
-	return gs_texrender_get_texture(f->input);
+	return hdrtk::capture_filter_input(f->context, f->input, ctx);
 }
 
 void filter_render(void *data, gs_effect_t *)

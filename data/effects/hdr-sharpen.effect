@@ -1,0 +1,118 @@
+// HDR Toolkit - HDR Sharpen (hdr_toolkit_sharpen_v1)
+// Copyright (C) 2026 srl01-coding, GPL-2.0-or-later
+//
+// Unsharp mask on luma in a log domain, applied to RGB as a gain (docs/SHARPEN.md).
+// Mirrored step by step in src/sharpen/sharpen-math.cpp sharpen_f() - keep in lock-step.
+//
+// `image` is the filter input: premultiplied linear RGB in the target's native OBS
+// colour space (8-bit SDR is bound through its sRGB view, so it is linear here too).
+// No clamp, no saturate: values above SDR white and negative (wide-gamut) components
+// pass through; the change is a per-channel gain around the dark floor.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform texture2d blur_tex;      // BlurH result: (sum w a F, sum w a)
+
+uniform float2 out_size;
+uniform float2 in_size;
+uniform float k_units = 0.01;    // dark floor K, working units
+uniform float taps = 3.0;        // 1..24 per side
+uniform float inv_2s2 = 0.5;     // 1 / (2 sigma^2)
+uniform float amount = 0.0;
+uniform float limit = 0.5;       // halo limit, stops
+uniform float thresh2 = 0.0;     // threshold^2, stops^2
+uniform float debug_mode = 0.0;  // 0 normal, 1 detail (stops), 2 change
+uniform float debug_gain = 4.0;
+
+struct VertInOut {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertInOut VSDefault(VertInOut vert_in)
+{
+	VertInOut vert_out;
+	vert_out.pos = mul(float4(vert_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = vert_in.uv;
+	return vert_out;
+}
+
+// log2 of the un-premultiplied luma above the dark floor
+float log_luma(float4 c)
+{
+	float y = dot(c.rgb, float3(0.2126, 0.7152, 0.0722));
+	y = c.a > 0.0 ? y / c.a : 0.0;
+	return log2(max(y, 0.0) + k_units);
+}
+
+// pass 1: horizontal alpha-weighted Gaussian of log luma
+float4 PSBlurH(VertInOut vert_in) : TARGET
+{
+	int2 p = int2(vert_in.uv * out_size);
+	int w = int(in_size.x);
+	float af = 0.0;
+	float aa = 0.0;
+	for (int i = -24; i <= 24; i++) {
+		if (abs(float(i)) > taps)
+			continue;
+		float4 c = image.Load(int3(clamp(p.x + i, 0, w - 1), p.y, 0));
+		float wt = exp(-float(i * i) * inv_2s2);
+		af += wt * (log_luma(c) * c.a);
+		aa += wt * c.a;
+	}
+	return float4(af, aa, 0.0, 1.0);
+}
+
+// pass 2: vertical Gaussian, detail, gain
+float4 PSCombine(VertInOut vert_in) : TARGET
+{
+	int2 p = int2(vert_in.uv * out_size);
+	int h = int(in_size.y);
+	float af = 0.0;
+	float aa = 0.0;
+	for (int i = -24; i <= 24; i++) {
+		if (abs(float(i)) > taps)
+			continue;
+		float2 b = blur_tex.Load(int3(p.x, clamp(p.y + i, 0, h - 1), 0)).xy;
+		float wt = exp(-float(i * i) * inv_2s2);
+		af += wt * b.x;
+		aa += wt * b.y;
+	}
+	float4 c = image.Load(int3(p, 0));
+	float e = 0.0;
+	if (aa > 0.000001 && c.a > 0.0) {
+		float d = log_luma(c) - af / aa;
+		float cd = d * d * d / (d * d + thresh2 + 1e-20);
+		float x2 = amount * cd / limit;
+		e = limit * (x2 / sqrt(1.0 + x2 * x2));
+	}
+	float g = exp2(e) - 1.0;
+	float3 rgb = c.rgb + (c.rgb + c.a * k_units) * g;
+	if (debug_mode > 1.5) {
+		float ch = abs(dot(rgb - c.rgb, float3(0.2126, 0.7152, 0.0722))) * debug_gain;
+		return float4(ch, ch, ch, 1.0);
+	}
+	if (debug_mode > 0.5) {
+		float v = 0.5 + 0.5 * e * debug_gain;
+		return float4(v, v, v, 1.0);
+	}
+	return float4(rgb, c.a);
+}
+
+technique BlurH
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSBlurH(vert_in);
+	}
+}
+
+technique Combine
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSCombine(vert_in);
+	}
+}

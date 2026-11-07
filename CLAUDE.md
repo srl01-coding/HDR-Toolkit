@@ -63,4 +63,6 @@ noise-normalised removal view; do not combine K~8 with the measured profile (KN-
 Apply sets knee + identity profile; knee range 0.01-50; label "Noise floor (comparison knee)"; NM-1.
 1 Nov: renamed to HDR Toolkit (package/DLL hdr-toolkit, repo renamed srl01-coding/HDR-Toolkit; work in /home/claude/hdr-toolkit); filter IDs unchanged;
 Program Denoise migrates its config from plugin_config/obs-hdr-toolkit. Historical docs/denoise briefs keep the old name.
+7 Nov (user): HDR Sharpen (src/sharpen, hdr-sharpen.effect mirrored by sharpen_f - lock-step; docs/SHARPEN.md;
+SH-1..4). Shared capture/draw in src/shared/filter-io (denoise filter uses it too).
 Windows compile check: python3 -m ziglang c++ -target x86_64-windows-gnu -c FILE -o out.o.

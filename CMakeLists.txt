@@ -38,8 +38,13 @@ target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
     src/plugin-main.cpp
+    src/shared/filter-io.cpp
+    src/shared/filter-io.hpp
     src/shared/obs-color-context.cpp
     src/shared/obs-color-context.hpp
+    src/sharpen/sharpen-filter.cpp
+    src/sharpen/sharpen-math.cpp
+    src/sharpen/sharpen-math.hpp
     src/neutral/neutral-filter.cpp
     src/pattern/pattern-math.cpp
     src/pattern/pattern-math.hpp
