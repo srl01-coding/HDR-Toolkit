@@ -73,4 +73,7 @@ Signal analysis rebuilds Y' codes, lattice coherence 6-10 bit (SignalMeter uses 
 8 Nov (user): SDR Conversion (src/sdr; hdr-sdr.effect mirrored by bt2446a_f / obs_reinhard_f - lock-step;
 docs/SDR_CONVERSION.md; C39, SD-1..4). Output always reported SRGB_16F (709_EXTENDED only for split on an HDR
 canvas) so libobs never applies DrawTonemap on top. SDR output clipped 0..1 by design (it is the SDR rendition).
+8 Nov (user): HDR Scale (src/scale; hdr-scale.effect mirrored by resample_f - lock-step; docs/HDR_SCALE.md;
+C40, SC-1..4). Church canvas 4560x2160 (19:9; YouTube live needs 2160 high, no letterbox). Filter sets its own
+size (get_width/height); item at 1:1. Enlarging = PQ domain + anti-ring, reducing = linear, no clamp.
 Windows compile check: python3 -m ziglang c++ -target x86_64-windows-gnu -c FILE -o out.o.

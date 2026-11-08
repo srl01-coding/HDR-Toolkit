@@ -1,0 +1,160 @@
+// HDR Toolkit - HDR Scale (hdr_toolkit_scale_v1): separable resampling for HDR
+// Copyright (C) 2026 srl01-coding, GPL-2.0-or-later
+//
+// One pass per axis (ResampleH: output width x input height; ResampleV: final size).
+// Enlarging axes interpolate in the ST 2084 PQ domain of absolute luminance (sign-
+// symmetric), reducing axes filter in linear light with the kernel widened by 1/scale.
+// Anti-ringing (enlarging only) pulls the result towards the range of the two nearest
+// samples. Premultiplied RGBA in and out, no clamp of HDR values. Mirrored in
+// src/scale/scale-math.cpp resample_f() - keep in lock-step.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 out_size;      // size of this pass's target
+
+uniform float axis_scale = 1.0;  // output pixels per input pixel
+uniform float axis_offset = 0.0; // u = (o + 0.5) / scale + offset
+uniform int kernel = 0;          // 0 Lanczos-3, 1 Catmull-Rom, 2 Mitchell, 3 bilinear
+uniform float radius = 3.0;      // support in input pixels
+uniform float wscale = 1.0;      // kernel argument multiplier, min(scale, 1)
+uniform int perceptual = 1;
+uniform float pq_k = 0.0203;     // nits per unit / 10000
+uniform float antiring = 0.8;
+uniform float in_len = 1920.0;   // input length along the axis
+
+struct VertInOut {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertInOut VSDefault(VertInOut vert_in)
+{
+	VertInOut vert_out;
+	vert_out.pos = mul(float4(vert_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = vert_in.uv;
+	return vert_out;
+}
+
+float bc_cubic(float x, float b, float c)
+{
+	x = abs(x);
+	if (x < 1.0)
+		return ((12.0 - 9.0 * b - 6.0 * c) * x * x * x + (-18.0 + 12.0 * b + 6.0 * c) * x * x +
+			(6.0 - 2.0 * b)) / 6.0;
+	if (x < 2.0)
+		return ((-b - 6.0 * c) * x * x * x + (6.0 * b + 30.0 * c) * x * x + (-12.0 * b - 48.0 * c) * x +
+			(8.0 * b + 24.0 * c)) / 6.0;
+	return 0.0;
+}
+
+float kernel_weight(float x)
+{
+	float ax = abs(x);
+	if (kernel == 0) {
+		if (ax < 1e-5)
+			return 1.0;
+		if (ax >= 3.0)
+			return 0.0;
+		float px = 3.14159265358979 * x;
+		return 3.0 * sin(px) * sin(px / 3.0) / (px * px);
+	}
+	if (kernel == 1)
+		return bc_cubic(x, 0.0, 0.5);
+	if (kernel == 2)
+		return bc_cubic(x, 1.0 / 3.0, 1.0 / 3.0);
+	return max(0.0, 1.0 - ax);
+}
+
+float pq_encode(float y)
+{
+	float p = pow(max(y, 0.0), 0.1593017578125);
+	return pow((0.8359375 + 18.8515625 * p) / (1.0 + 18.6875 * p), 78.84375);
+}
+
+float pq_decode(float e)
+{
+	float p = pow(max(e, 0.0), 1.0 / 78.84375);
+	return pow(max(p - 0.8359375, 0.0) / (18.8515625 - 18.6875 * p), 1.0 / 0.1593017578125);
+}
+
+float3 enc(float3 v)
+{
+	if (perceptual == 0)
+		return v;
+	float3 e = float3(pq_encode(abs(v.r) * pq_k), pq_encode(abs(v.g) * pq_k), pq_encode(abs(v.b) * pq_k));
+	return float3(v.r < 0.0 ? -e.r : e.r, v.g < 0.0 ? -e.g : e.g, v.b < 0.0 ? -e.b : e.b);
+}
+
+float3 dec(float3 v)
+{
+	if (perceptual == 0)
+		return v;
+	float3 d = float3(pq_decode(abs(v.r)), pq_decode(abs(v.g)), pq_decode(abs(v.b))) / pq_k;
+	return float3(v.r < 0.0 ? -d.r : d.r, v.g < 0.0 ? -d.g : d.g, v.b < 0.0 ? -d.b : d.b);
+}
+
+float4 load_axis(int i, int2 p, bool horizontal)
+{
+	int n = int(in_len);
+	int ic = min(n - 1, max(0, i));
+	return horizontal ? image.Load(int3(ic, p.y, 0)) : image.Load(int3(p.x, ic, 0));
+}
+
+float4 resample(float2 uv, bool horizontal)
+{
+	int2 p = int2(uv * out_size);
+	int o = horizontal ? p.x : p.y;
+	float u = (float(o) + 0.5) / axis_scale + axis_offset;
+	if (u < 0.0 || u > in_len)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	float t = u - 0.5;
+	int first = int(floor(t - radius)) + 1;
+	int last = int(floor(t + radius));
+	float4 acc = float4(0.0, 0.0, 0.0, 0.0);
+	float wsum = 0.0;
+	for (int j = 0; j < 64; j++) {
+		int i = first + j;
+		if (i > last)
+			break;
+		float w = kernel_weight((t - float(i)) * wscale);
+		float4 px = load_axis(i, p, horizontal);
+		acc += w * float4(enc(px.rgb), px.a);
+		wsum += w;
+	}
+	float4 r = wsum != 0.0 ? acc / wsum : float4(0.0, 0.0, 0.0, 0.0);
+	float4 a = load_axis(int(floor(t)), p, horizontal);
+	float4 b = load_axis(int(floor(t)) + 1, p, horizontal);
+	a.rgb = enc(a.rgb);
+	b.rgb = enc(b.rgb);
+	float4 cl = min(max(r, min(a, b)), max(a, b));
+	r = r + (cl - r) * antiring;
+	return float4(dec(r.rgb), r.a);
+}
+
+float4 PSResampleH(VertInOut vert_in) : TARGET
+{
+	return resample(vert_in.uv, true);
+}
+
+float4 PSResampleV(VertInOut vert_in) : TARGET
+{
+	return resample(vert_in.uv, false);
+}
+
+technique ResampleH
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSResampleH(vert_in);
+	}
+}
+
+technique ResampleV
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSResampleV(vert_in);
+	}
+}

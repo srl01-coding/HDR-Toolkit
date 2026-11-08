@@ -16,6 +16,7 @@ sharing a small colour/rendering support layer:
 | HDR Input | `hdr_toolkit_input_v1` | Reinterpret SDR-decoded HLG (DeckLink without HDR metadata) with OBS's own formulas; luma bit-depth analysis (user-directed, 7 Nov); docs/HDR_INPUT.md |
 | HDR Sharpen | `hdr_toolkit_sharpen_v1` | Log-luma unsharp mask with halo limit and dark floor (user-directed, 7 Nov); docs/SHARPEN.md |
 | SDR Conversion | `hdr_toolkit_sdr_v1` | HDR -> SDR (BT.2446-1 Method A / OBS default), output reported SRGB_16F so libobs never tone-maps on top; split compare (user-directed, 8 Nov); docs/SDR_CONVERSION.md |
+| HDR Scale | `hdr_toolkit_scale_v1` | Size / desqueeze / crop / punch-in; separable PQ-domain enlarging with anti-ringing, linear-light reducing (user-directed, 8 Nov, 4560 x 2160 canvas); docs/HDR_SCALE.md |
 
 Developer-only objects present in P0:
 

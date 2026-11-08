@@ -47,6 +47,9 @@ target_sources(
     src/input/input-math.hpp
     src/input/signal-meter.cpp
     src/input/signal-meter.hpp
+    src/scale/scale-filter.cpp
+    src/scale/scale-math.cpp
+    src/scale/scale-math.hpp
     src/sdr/sdr-filter.cpp
     src/sdr/sdr-math.cpp
     src/sdr/sdr-math.hpp
