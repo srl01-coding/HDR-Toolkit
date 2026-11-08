@@ -12,6 +12,10 @@ HDR-safe video filters for OBS Studio, working in OBS's linear HDR space without
 * **HDR Sharpen** - unsharp mask that works on HDR (OBS's Sharpen skips HDR sources):
   sharpens luma in a log domain and applies it as a gain, so highlights are kept, halos are
   limited in stops, and shadow noise is not boosted. See `docs/SHARPEN.md`.
+* **SDR Conversion** - shows the SDR version of an HDR picture (BT.2446-1 Method A
+  broadcast down-mapping, or OBS's own tone map for comparison), with a split compare: a
+  pre-broadcast check on an HLG canvas, or a proper HDR to SDR conversion for an HLG camera
+  on an SDR canvas. See `docs/SDR_CONVERSION.md`.
 * **HDR Color** - white balance (temperature / tint), exposure, contrast and pivot,
   saturation, colour-balance wheel, seven tonal zones, linear offset, Grade Mix,
   and low / high soft clip.

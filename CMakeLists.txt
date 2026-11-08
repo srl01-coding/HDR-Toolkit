@@ -47,6 +47,9 @@ target_sources(
     src/input/input-math.hpp
     src/input/signal-meter.cpp
     src/input/signal-meter.hpp
+    src/sdr/sdr-filter.cpp
+    src/sdr/sdr-math.cpp
+    src/sdr/sdr-math.hpp
     src/sharpen/sharpen-filter.cpp
     src/sharpen/sharpen-math.cpp
     src/sharpen/sharpen-math.hpp

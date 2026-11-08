@@ -70,4 +70,7 @@ IN-1..4). The ONE sanctioned HLG decode: undo OBS's sRGB decode of SDR-tagged HL
 Output stays in the parent's SRGB_16F with values >1 (libobs takes item space from the async parent;
 reporting 709_EXTENDED got tone-mapped back to SDR - user saw no change, fixed 8 Nov).
 Signal analysis rebuilds Y' codes, lattice coherence 6-10 bit (SignalMeter uses denoise sample_grid).
+8 Nov (user): SDR Conversion (src/sdr; hdr-sdr.effect mirrored by bt2446a_f / obs_reinhard_f - lock-step;
+docs/SDR_CONVERSION.md; C39, SD-1..4). Output always reported SRGB_16F (709_EXTENDED only for split on an HDR
+canvas) so libobs never applies DrawTonemap on top. SDR output clipped 0..1 by design (it is the SDR rendition).
 Windows compile check: python3 -m ziglang c++ -target x86_64-windows-gnu -c FILE -o out.o.

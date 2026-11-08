@@ -15,6 +15,7 @@ sharing a small colour/rendering support layer:
 | HDR Color | `hdr_toolkit_color_v1` | P2 global stages (WB, exposure, contrast, wheel, saturation, Grade Mix) P3 six tonal zones (frozen masks, open ends, mask diagnostic), linear offset (user-directed) and low/high soft clip implemented; wheel UI and gamut containment in P5 |
 | HDR Input | `hdr_toolkit_input_v1` | Reinterpret SDR-decoded HLG (DeckLink without HDR metadata) with OBS's own formulas; luma bit-depth analysis (user-directed, 7 Nov); docs/HDR_INPUT.md |
 | HDR Sharpen | `hdr_toolkit_sharpen_v1` | Log-luma unsharp mask with halo limit and dark floor (user-directed, 7 Nov); docs/SHARPEN.md |
+| SDR Conversion | `hdr_toolkit_sdr_v1` | HDR -> SDR (BT.2446-1 Method A / OBS default), output reported SRGB_16F so libobs never tone-maps on top; split compare (user-directed, 8 Nov); docs/SDR_CONVERSION.md |
 
 Developer-only objects present in P0:
 

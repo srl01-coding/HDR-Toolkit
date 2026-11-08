@@ -1,0 +1,109 @@
+// HDR Toolkit - SDR Conversion (hdr_toolkit_sdr_v1): HDR -> SDR down-conversion for checking
+// Copyright (C) 2026 srl01-coding, GPL-2.0-or-later
+//
+// Method A of Report ITU-R BT.2446-1 (display light, BT.2020), or a mirror of libobs
+// default.effect DrawTonemap ("OBS default"). Mirrored in src/sdr/sdr-math.cpp bt2446a_f() /
+// obs_reinhard_f() - keep in lock-step. Input: premultiplied OBS linear, scaled by in_scale
+// to Rec.709 with 1.0 = SDR white. Output: premultiplied OBS linear SDR (srgb_decode of the
+// BT.709 SDR signal, 0..1). The SDR output is clipped to 0..1 by design: it is the SDR
+// rendition. Split compare: pixels left of split_x show the input (left_mode 0, HDR canvas)
+// or OBS's own tone map of it (left_mode 1, SDR canvas).
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 out_size;
+
+uniform float in_scale = 1.0;           // native units -> OBS 709 units (1.0 = SDR white)
+uniform int method = 0;                 // 0 BT.2446-1 Method A, 1 OBS default
+uniform float to_norm = 0.3;            // sdr_white / Lhdr
+uniform float rho_hdr_m1 = 12.2598;     // rho(Lhdr) - 1
+uniform float inv_log_rho_hdr = 0.3869; // 1 / ln(rho(Lhdr))
+uniform float log_rho_sdr = 1.7400;     // ln(rho(Lsdr))
+uniform float inv_rho_sdr_m1 = 0.2129;  // 1 / (rho(Lsdr) - 1)
+uniform float split_x = -1.0;           // pixels; < 0: no split
+uniform int left_mode = 0;
+
+struct VertInOut {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertInOut VSDefault(VertInOut vert_in)
+{
+	VertInOut vert_out;
+	vert_out.pos = mul(float4(vert_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = vert_in.uv;
+	return vert_out;
+}
+
+float srgb_decode_ch(float u)
+{
+	return (u <= 0.04045) ? (u / 12.92) : pow(u * (1.0 / 1.055) + 0.055 / 1.055, 2.4);
+}
+
+float3 m709_to_2020(float3 v)
+{
+	return float3(dot(v, float3(0.62740389593469903, 0.32928303837788370, 0.043313065687417225)),
+		      dot(v, float3(0.069097289358232075, 0.91954039507545871, 0.011362315566309178)),
+		      dot(v, float3(0.016391438875150280, 0.088013307877225749, 0.89559525324762401)));
+}
+
+float3 m2020_to_709(float3 v)
+{
+	return float3(dot(v, float3(1.6604910021084345, -0.58764113878854951, -0.072849863319884883)),
+		      dot(v, float3(-0.12455047452159074, 1.1328998971259603, -0.0083494226043694768)),
+		      dot(v, float3(-0.018150763354905303, -0.10057889800800739, 1.1187296613629127)));
+}
+
+float3 sdr_2446a(float3 v)
+{
+	float3 e = pow(max(m709_to_2020(v) * to_norm, 0.0), 1.0 / 2.4);
+	float y = dot(e, float3(0.2627, 0.6780, 0.0593));
+	if (!(y > 1e-6))
+		return float3(0.0, 0.0, 0.0);
+	float yp = log(1.0 + rho_hdr_m1 * y) * inv_log_rho_hdr;
+	float yc = yp <= 0.7399 ? 1.077 * yp
+				: (yp < 0.9909 ? (-1.1510 * yp + 2.7811) * yp - 0.6302 : 0.5 * yp + 0.5);
+	float ysdr = (exp(log_rho_sdr * yc) - 1.0) * inv_rho_sdr_m1;
+	float f = ysdr / (1.1 * y);
+	float cb = f * (e.b - y) * (1.0 / 1.8814);
+	float cr = f * (e.r - y) * (1.0 / 1.4746);
+	float yt = ysdr - max(0.1 * cr, 0.0);
+	float3 s = saturate(float3(yt + 1.4746 * cr, yt - 0.16455 * cb - 0.57135 * cr, yt + 1.8814 * cb));
+	float3 l = saturate(m2020_to_709(pow(s, 2.4)));
+	float3 o = pow(l, 1.0 / 2.4);
+	return float3(srgb_decode_ch(o.r), srgb_decode_ch(o.g), srgb_decode_ch(o.b));
+}
+
+float3 obs_reinhard(float3 v)
+{
+	float3 r = m709_to_2020(v);
+	r = saturate(r / (r + 1.0));
+	r = pow(r, 1.0 / 2.4);
+	r = float3(srgb_decode_ch(r.r), srgb_decode_ch(r.g), srgb_decode_ch(r.b));
+	return m2020_to_709(r);
+}
+
+float4 PSConvert(VertInOut vert_in) : TARGET
+{
+	int2 p = int2(vert_in.uv * out_size);
+	float4 c = image.Load(int3(p, 0));
+	float3 v = c.a > 0.0 ? c.rgb / c.a * in_scale : float3(0.0, 0.0, 0.0);
+	float3 o;
+	if (split_x >= 0.0 && float(p.x) < split_x - 1.0)
+		o = left_mode == 1 ? obs_reinhard(v) : v;
+	else if (split_x >= 0.0 && float(p.x) < split_x + 1.0)
+		o = float3(0.5, 0.5, 0.5); // divider, 2 px
+	else
+		o = method == 1 ? obs_reinhard(v) : sdr_2446a(v);
+	return float4(o * c.a, c.a);
+}
+
+technique Convert
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSConvert(vert_in);
+	}
+}
