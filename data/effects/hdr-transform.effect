@@ -6,8 +6,15 @@
 // src/transform/quad-math.cpp (shader_inverse_*) and tested there.
 //
 // `image` is the filter texrender: premultiplied linear RGB in the target's
-// native OBS colour space. Geometry only: no colour arithmetic, no clamp of
-// RGB. Pixels outside the warped quad are transparent black.
+// native OBS colour space. Geometry only: no clamp of RGB. Pixels outside the
+// warped quad are transparent black.
+//
+// Schema 3 (8 Nov 2026, user): output size (resize after the corner pin, so the
+// whole geometry is one resample) and High quality sampling (SampleHQ): 6x6
+// Lanczos-3 in the source grid at the mapped point, kernel widened along the local
+// footprint where the warp reduces, PQ-domain interpolation with anti-ringing where
+// it enlarges, linear light where it reduces (blended in between). Mirrored in
+// src/transform/warp-math.cpp - keep in lock-step.
 
 uniform float4x4 ViewProj;
 uniform texture2d image;
@@ -32,6 +39,16 @@ uniform float pre_k = 0.0;               // radial coefficient (+ barrel, - pinc
 uniform float pre_inv_hd2 = 0.0;         // 4 / (W^2 + H^2)
 uniform float pre_scale = 1.0;           // fill scale
 uniform float2 pre_size = {1920.0, 1080.0};
+
+// Schema 3: output size and resampling
+uniform texture2d pq_image;              // PQ-encoded copy of image (SampleHQ)
+uniform float2 out_size = {1920.0, 1080.0};
+uniform float2 in_size = {1920.0, 1080.0};
+uniform float2 res_scale = {1.0, 1.0};   // output pixels per frame pixel
+uniform float2 res_offset = {0.0, 0.0};  // frame px = (out px) / res_scale + res_offset
+uniform int warp = 0;                    // 0 bilinear corner pin, 1 projective
+uniform float antiring = 0.8;
+uniform float pq_k = 0.0203;             // nits per unit / 10000
 
 sampler_state linear_sampler {
 	Filter   = Linear;
@@ -167,72 +184,209 @@ float3 full_map(float3 m)
 	return pre_warp(clamp(m.xy, 0.0, 1.0));
 }
 
+// Output pixel position (pixel units, centres at +0.5) -> source (u, v, valid).
+float3 map_px(float2 c)
+{
+	float2 fr = (c / res_scale + res_offset) / in_size;
+	float3 m = warp == 1 ? inverse_projective(fr) : inverse_bilinear(fr);
+	return full_map(m);
+}
+
 // Valid UVs are clamped by the tolerance only; invalid ones never sample, so
 // edge pixels are not smeared outside the quad.
-float4 PSBilinearLinear(VertInOut vert_in) : TARGET
+float4 PSSampleLinear(VertInOut vert_in) : TARGET
 {
-	float3 m = full_map(inverse_bilinear(vert_in.uv));
+	float2 c = floor(vert_in.uv * out_size) + 0.5;
+	float3 m = map_px(c);
 	if (m.z < 0.5)
 		return float4(0.0, 0.0, 0.0, 0.0);
 	return image.Sample(linear_sampler, clamp(m.xy, 0.0, 1.0));
 }
 
-float4 PSBilinearPoint(VertInOut vert_in) : TARGET
+float4 PSSamplePoint(VertInOut vert_in) : TARGET
 {
-	float3 m = full_map(inverse_bilinear(vert_in.uv));
+	float2 c = floor(vert_in.uv * out_size) + 0.5;
+	float3 m = map_px(c);
 	if (m.z < 0.5)
 		return float4(0.0, 0.0, 0.0, 0.0);
 	return image.Sample(point_sampler, clamp(m.xy, 0.0, 1.0));
 }
 
-float4 PSProjectiveLinear(VertInOut vert_in) : TARGET
+float pq_encode(float y)
 {
-	float3 m = full_map(inverse_projective(vert_in.uv));
-	if (m.z < 0.5)
+	float p = pow(max(y, 0.0), 0.1593017578125);
+	return pow((0.8359375 + 18.8515625 * p) / (1.0 + 18.6875 * p), 78.84375);
+}
+
+float pq_decode(float e)
+{
+	float p = pow(max(e, 0.0), 1.0 / 78.84375);
+	return pow(max(p - 0.8359375, 0.0) / (18.8515625 - 18.6875 * p), 1.0 / 0.1593017578125);
+}
+
+float enc1(float v)
+{
+	float e = pq_encode(abs(v) * pq_k);
+	return v < 0.0 ? -e : e;
+}
+
+float dec1(float v)
+{
+	float d = pq_decode(abs(v)) / pq_k;
+	return v < 0.0 ? -d : d;
+}
+
+// Pre-pass for SampleHQ: PQ-encoded copy (RGB), alpha unchanged. Same size as the input.
+float4 PSEncodePQ(VertInOut vert_in) : TARGET
+{
+	int2 p = int2(vert_in.uv * in_size);
+	float4 c = image.Load(int3(p, 0));
+	return float4(enc1(c.r), enc1(c.g), enc1(c.b), c.a);
+}
+
+float lanczos3(float x)
+{
+	float ax = abs(x);
+	if (ax < 0.00001)
+		return 1.0;
+	if (ax >= 3.0)
+		return 0.0;
+	float px = 3.14159265358979 * x;
+	return 3.0 * sin(px) * sin(px / 3.0) / (px * px);
+}
+
+float snap(float v)
+{
+	float r = round(v);
+	return abs(v - r) < 0.001 ? r : v;
+}
+
+float4 PSSampleHQ(VertInOut vert_in) : TARGET
+{
+	float2 c = floor(vert_in.uv * out_size) + 0.5;
+	float3 m0 = map_px(c);
+	if (m0.z < 0.5)
 		return float4(0.0, 0.0, 0.0, 0.0);
-	return image.Sample(linear_sampler, clamp(m.xy, 0.0, 1.0));
+	// local footprint: source texels per output pixel (forward difference, else backward)
+	float3 mx = map_px(c + float2(1.0, 0.0));
+	float sgx = 1.0;
+	if (mx.z < 0.5) {
+		mx = map_px(c - float2(1.0, 0.0));
+		sgx = -1.0;
+	}
+	float3 my = map_px(c + float2(0.0, 1.0));
+	float sgy = 1.0;
+	if (my.z < 0.5) {
+		my = map_px(c - float2(0.0, 1.0));
+		sgy = -1.0;
+	}
+	float2 jx = mx.z > 0.5 ? (mx.xy - m0.xy) * in_size * sgx : float2(1.0 / res_scale.x, 0.0);
+	float2 jy = my.z > 0.5 ? (my.xy - m0.xy) * in_size * sgy : float2(0.0, 1.0 / res_scale.y);
+	// M = J J^T, eigen-decomposition
+	float ma = jx.x * jx.x + jy.x * jy.x;
+	float mb = jx.x * jx.y + jy.x * jy.y;
+	float md = jx.y * jx.y + jy.y * jy.y;
+	float tr = 0.5 * (ma + md);
+	float dt = sqrt(max(0.25 * (ma - md) * (ma - md) + mb * mb, 0.0));
+	float s1 = sqrt(max(tr + dt, 0.0));
+	float s2 = sqrt(max(tr - dt, 0.0));
+	float2 e1;
+	if (abs(mb) > 0.000001)
+		e1 = normalize(float2(tr + dt - md, mb));
+	else
+		e1 = ma >= md ? float2(1.0, 0.0) : float2(0.0, 1.0);
+	float2 e2 = float2(-e1.y, e1.x);
+	float w1 = s1 < 1.001 ? 1.0 : min(s1, 2.0);
+	float w2 = s2 < 1.001 ? 1.0 : min(s2, 2.0);
+	// F^-1 and F (symmetric)
+	float fi00 = e1.x * e1.x / w1 + e2.x * e2.x / w2;
+	float fi01 = e1.x * e1.y / w1 + e2.x * e2.y / w2;
+	float fi11 = e1.y * e1.y / w1 + e2.y * e2.y / w2;
+	float f00 = e1.x * e1.x * w1 + e2.x * e2.x * w2;
+	float f01 = e1.x * e1.y * w1 + e2.x * e2.y * w2;
+	float f11 = e1.y * e1.y * w1 + e2.y * e2.y * w2;
+	float tdom = smoothstep(1.001, 1.5, s1); // 0: PQ (enlarging), 1: linear (reducing)
+
+	float2 q = m0.xy * in_size - 0.5;
+	q = float2(snap(q.x), snap(q.y));
+	int nw = int(in_size.x), nh = int(in_size.y);
+	if (q.x == round(q.x) && q.y == round(q.y) && w1 == 1.0 && w2 == 1.0) {
+		int2 t = int2(clamp(int(q.x), 0, nw - 1), clamp(int(q.y), 0, nh - 1));
+		return image.Load(int3(t, 0));
+	}
+	float ex = 3.0 * (abs(f00) + abs(f01));
+	float ey = 3.0 * (abs(f01) + abs(f11));
+	int x0 = int(floor(q.x - ex)) + 1;
+	int y0 = int(floor(q.y - ey)) + 1;
+	int nx = min(int(floor(q.x + ex)) - x0 + 1, 20);
+	int ny = min(int(floor(q.y + ey)) - y0 + 1, 20);
+	int count = nx * ny;
+	float4 accl = float4(0.0, 0.0, 0.0, 0.0);
+	float3 accp = float3(0.0, 0.0, 0.0);
+	float wsum = 0.0;
+	for (int k = 0; k < 400; k++) {
+		if (k >= count)
+			break;
+		int i = x0 + k % nx;
+		int j = y0 + k / nx;
+		float2 d = q - float2(float(i), float(j));
+		float dx = fi00 * d.x + fi01 * d.y;
+		float dy = fi01 * d.x + fi11 * d.y;
+		float w = lanczos3(dx) * lanczos3(dy);
+		int3 t = int3(clamp(i, 0, nw - 1), clamp(j, 0, nh - 1), 0);
+		accl += w * image.Load(t);
+		accp += w * pq_image.Load(t).rgb;
+		wsum += w;
+	}
+	float inv = wsum != 0.0 ? 1.0 / wsum : 0.0;
+	float4 rl = accl * inv;
+	float3 rp = accp * inv;
+	// anti-ringing (PQ path): towards the range of the 2 x 2 nearest texels
+	int ix = int(floor(q.x)), iy = int(floor(q.y));
+	float3 n00 = pq_image.Load(int3(clamp(ix, 0, nw - 1), clamp(iy, 0, nh - 1), 0)).rgb;
+	float3 n10 = pq_image.Load(int3(clamp(ix + 1, 0, nw - 1), clamp(iy, 0, nh - 1), 0)).rgb;
+	float3 n01 = pq_image.Load(int3(clamp(ix, 0, nw - 1), clamp(iy + 1, 0, nh - 1), 0)).rgb;
+	float3 n11 = pq_image.Load(int3(clamp(ix + 1, 0, nw - 1), clamp(iy + 1, 0, nh - 1), 0)).rgb;
+	float3 lo = min(min(n00, n10), min(n01, n11));
+	float3 hi = max(max(n00, n10), max(n01, n11));
+	rp = rp + (clamp(rp, lo, hi) - rp) * antiring;
+	float3 dp = float3(dec1(rp.r), dec1(rp.g), dec1(rp.b));
+	float3 rgb = lerp(dp, rl.rgb, tdom);
+	return float4(rgb, saturate(rl.a));
 }
 
-float4 PSProjectivePoint(VertInOut vert_in) : TARGET
-{
-	float3 m = full_map(inverse_projective(vert_in.uv));
-	if (m.z < 0.5)
-		return float4(0.0, 0.0, 0.0, 0.0);
-	return image.Sample(point_sampler, clamp(m.xy, 0.0, 1.0));
-}
-
-technique BilinearLinear
+technique SampleLinear
 {
 	pass
 	{
 		vertex_shader = VSDefault(vert_in);
-		pixel_shader  = PSBilinearLinear(vert_in);
+		pixel_shader  = PSSampleLinear(vert_in);
 	}
 }
 
-technique BilinearPoint
+technique SamplePoint
 {
 	pass
 	{
 		vertex_shader = VSDefault(vert_in);
-		pixel_shader  = PSBilinearPoint(vert_in);
+		pixel_shader  = PSSamplePoint(vert_in);
 	}
 }
 
-technique ProjectiveLinear
+technique EncodePQ
 {
 	pass
 	{
 		vertex_shader = VSDefault(vert_in);
-		pixel_shader  = PSProjectiveLinear(vert_in);
+		pixel_shader  = PSEncodePQ(vert_in);
 	}
 }
 
-technique ProjectivePoint
+technique SampleHQ
 {
 	pass
 	{
 		vertex_shader = VSDefault(vert_in);
-		pixel_shader  = PSProjectivePoint(vert_in);
+		pixel_shader  = PSSampleHQ(vert_in);
 	}
 }

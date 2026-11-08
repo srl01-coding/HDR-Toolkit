@@ -4,25 +4,32 @@ Persisted numeric parameters only (brief 10.4). Values are validated on load
 and on every update; unknown enum values fall back to the default. Any change
 to processing order or meaning needs a new `schema_version` and a migration.
 
-## hdr_toolkit_transform_v1 (schema_version 2: P1 corner pin + pre-warp)
+## hdr_toolkit_transform_v1 (schema_version 3: corner pin + pre-warp + output size + high-quality sampling)
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `schema_version` | int | 2 | 1 = corner pin only. 2 adds the pre-warp keys below with neutral defaults, so schema-1 settings load unchanged (no migration). |
+| `schema_version` | int | 3 | 1 = corner pin only. 2 adds the pre-warp keys below with neutral defaults, so schema-1 settings load unchanged (no migration). 3 (user-directed 8 Nov 2026) adds the output-size keys with neutral defaults and makes High quality the default sampling; no migration (geometry and order of existing settings unchanged; instances that never stored `sampling_mode` now render with High quality) |
 | `warp_model` | int | 0 | 0 = Bilinear (StreamFX-style inverse-bilinear), 1 = Projective (homography) |
 | `corner_tl_x`, `corner_tl_y` | double | 0, 0 | **Canonical** corner A, normalised to the output rectangle (x right, y down) |
 | `corner_tr_x`, `corner_tr_y` | double | 1, 0 | corner B |
 | `corner_br_x`, `corner_br_y` | double | 1, 1 | corner C |
 | `corner_bl_x`, `corner_bl_y` | double | 0, 1 | corner D |
 | `ui_tl_x` ... `ui_bl_y` | double | canonical x 100 | UI mirror in percent. Written through to the canonical keys by the property callbacks; regenerated from the canonical keys on every update. Scripts should set the canonical keys. |
-| `sampling_mode` | int | 0 | 0 = bilinear, 1 = point (diagnostic) |
+| `sampling_mode` | int | 2 | 0 = bilinear, 1 = point (diagnostic), 2 = high quality (schema 3): 2-D Lanczos-3 at the mapped point, kernel widened along the local footprint where the warp reduces (cap 2x), PQ domain + anti-ringing where it enlarges, linear light where it reduces (smoothstep blend between footprint 1.001 and 1.5). Exact at 1:1 |
+| `antiring` | double | 80 | 0..100 %: high-quality sampling, enlarging part: pull towards the range of the 2 x 2 nearest texels (PQ domain) |
 | `force_render_identity` | bool | false | Diagnostic: run the shader even for the identity quad |
 | `pre_rotation_deg` | double | 0 | Pre-warp step 1 (user-directed, 1 Nov 2026): rotation of the source about the frame centre, degrees, clockwise on screen, isotropic in pixels. -180..180 |
 | `pre_distortion` | double | 0 | Pre-warp step 2: radial barrel (+) / pincushion (-), -100..100 -> k = 0.3 x value / 100. Sampling map e = s d (1 + k r^2), r = 1 at the frame corners. k >= -0.3 keeps the map monotonic (fold-free needs k > -1/3) |
+| `out_w`, `out_h` | int | 0, 0 | Schema 3: output size in pixels; 0 = from the source (desqueezed). The filter reports this size; the item can sit at 1:1 |
+| `out_fit` | int | 0 | 0 = Fill (crop, centred), 1 = Fit (transparent borders), 2 = Stretch (HDR Scale's layout) |
+| `out_desqueeze` | double | 1 | Horizontal pixel aspect of the source (anamorphic), 0.25..4 |
+| `out_pan_x`, `out_pan_y` | double | 0, 0 | -100..100 %: position within the cropped-away area (Fill) |
 | `pre_autofill` | bool | true | Scale s = the largest view with no empty corners or edges (boundary of the frame sampled at 4 x 513 points, then 1 ppm inside); off: s = 1 |
 
-**Processing order (schema 2):** source -> rotation -> barrel/pincushion -> corner pin ->
-output. Rotation and the radial distortion are both centred on the frame and isotropic in
+**Processing order (schema 3):** source -> rotation -> barrel/pincushion -> corner pin ->
+resize to the output size (Fill / Fit / Stretch, desqueeze, pan) -> output. All of it is one
+inverse map and one resample. Corners are in percent of the frame before the resize (the
+source-sized frame). Rotation and the radial distortion are both centred on the frame and isotropic in
 pixels, so they commute: their relative order does not change the image, only that both
 come before the corner pin. With both at 0 the pre-warp is skipped (`pre_on = 0`) and the
 output is bit-identical to schema 1.

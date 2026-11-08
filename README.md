@@ -5,7 +5,10 @@ HDR-safe video filters for OBS Studio, working in OBS's linear HDR space without
 
 * **HDR Transform** - four-corner pin, bilinear (StreamFX-style) or projective, with
   rotation and barrel / pincushion correction applied to the source before the corners,
-  and an optional scale-to-fill so no empty corners or edges show. 3D modes are planned.
+  an optional scale-to-fill so no empty corners or edges show, and an output size (fill /
+  fit, anamorphic desqueeze) so the whole geometry is one resample. High-quality sampling
+  (Lanczos 3, HDR-safe, anti-aliased where the picture shrinks) by default. 3D modes are
+  planned.
 * **HDR Input** - first on a capture source: turns an HLG signal that OBS decoded as SDR
   (DeckLink without HDR metadata: peaks at ~75%, flat) back into proper HLG, and analyses the
   incoming signal's bit depth. See `docs/HDR_INPUT.md`.

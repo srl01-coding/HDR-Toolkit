@@ -63,6 +63,8 @@ target_sources(
     src/transform/quad-math.cpp
     src/transform/quad-math.hpp
     src/transform/transform-filter.cpp
+    src/transform/warp-math.cpp
+    src/transform/warp-math.hpp
     src/color/color-math.cpp
     src/color/color-math.hpp
     src/color/color-filter.cpp

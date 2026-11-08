@@ -68,7 +68,9 @@ through; *Force shader render at 1:1* runs both passes anyway, for the identity 
 
 **Placement:** after HDR Denoise and HDR Color (cheaper at source size, and denoise needs
 the camera's own pixels), before HDR Sharpen (sharpen at the output size makes up for the
-softness of a 1.19x enlargement). HDR Transform, if used, goes before HDR Scale.
+softness of a 1.19x enlargement). A camera that needs HDR Transform (rotation, lens
+distortion, keystone) should use Transform's own output size instead of HDR Scale, so the
+whole geometry is one resample (schema 3, same layout and High quality sampling).
 
 **Cost:** two passes. Lanczos 3 enlarging reads 6 texels per pass with a PQ encode per tap
 (about 2 % of a GTX 1650 Super's arithmetic at 4560 x 2160 x 30 fps by estimate, not
