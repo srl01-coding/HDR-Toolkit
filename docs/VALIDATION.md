@@ -66,7 +66,7 @@ evidence for every result; never infer a result from a different layer.
 | ID | Test | Status | Evidence |
 |---|---|---|---|
 | B1 | Sources compile against OBS 32.2.2 headers (`g++ -fsyntax-only -Wall -Wextra`) | PASS | no diagnostics (re-run 2026-10-04 with denoise P2 sources) |
-| B2 | CI Windows x64 build (OBS 31.1.1 SDK) | PASS | HDR Scale: run 42480669119, commit f3cd4ad, artifact `hdr-toolkit-0.1.0-windows-x64-f3cd4ad65` (all jobs green, macOS included) (earlier: 42474306504, 42444046837, 42372907950, 42371614033, 41261489110, 41257664334, 38041046450, 37587479465, 37301445346, 37253078785, 37247021354, 37207465595, 37203845024, 37202766610, 37193906411, 37192864726, 37168988698, 37168271759, 37166894772, 37165577267) |
+| B2 | CI Windows x64 build (OBS 31.1.1 SDK) | PASS | HDR Transform schema 3: run 42481963752, commit 4180456, artifact `hdr-toolkit-0.1.0-windows-x64-418045611` (earlier: 42480669119, 42474306504, 42444046837, 42372907950, 42371614033, 41261489110, 41257664334, 38041046450, 37587479465, 37301445346, 37253078785, 37247021354, 37207465595, 37203845024, 37202766610, 37193906411, 37192864726, 37168988698, 37168271759, 37166894772, 37165577267) |
 | B3 | CI macOS / Ubuntu builds, clang-format 19 + gersemi checks | PASS | same run; builds are not a macOS/Linux support claim (nothing run there) |
 
 ## Layer 2 - OBS / GPU (requires the user's machine)
