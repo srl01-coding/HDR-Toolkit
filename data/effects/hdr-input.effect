@@ -6,7 +6,9 @@
 // HLG decode (libobs format_conversion.effect PSV210_HLG_2020_709_Reverse, color.effect
 // hlg_to_linear / rec2020_to_rec709), so the result is what OBS produces for a correctly
 // tagged HLG frame. Mirrored in src/input/input-math.cpp reinterpret_f() - keep in lock-step.
-// Output: premultiplied linear Rec.709 in GS_CS_709_EXTENDED. No clamp.
+// Output: premultiplied linear Rec.709, 1.0 = SDR white, values above 1.0 kept. It is
+// written in the parent's GS_CS_SRGB_16F (libobs takes the item's space from the async
+// parent; see input-filter.cpp reinterpreting()). No clamp.
 
 uniform float4x4 ViewProj;
 uniform texture2d image;

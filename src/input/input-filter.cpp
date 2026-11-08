@@ -95,10 +95,16 @@ Settings snapshot(InputFilter *f)
 	return f->settings;
 }
 
-// reinterpretation applies only to SDR-decoded input
+// Reinterpretation applies only to SDR-decoded 16-bit float input (DeckLink 10-bit YUV).
+// The output keeps the parent's colour space (SRGB_16F, 1.0 = SDR white) and carries the
+// HDR values above 1.0 in it: libobs asks the async parent, not the filter chain, for the
+// item's colour space, so reporting 709_EXTENDED here would make libobs tone-map our
+// output back into SDR (source_render: 709_EXTENDED inside an SRGB_16F target ->
+// DrawTonemap). SRGB_16F -> 709_EXTENDED is a plain copy, so the values reach an HDR canvas
+// unchanged. An 8-bit input (GS_CS_SRGB) cannot carry them at all.
 bool reinterpreting(const Settings &s, enum gs_color_space native)
 {
-	return s.mode == ModeHlgAsSdr && (native == GS_CS_SRGB || native == GS_CS_SRGB_16F);
+	return s.mode == ModeHlgAsSdr && native == GS_CS_SRGB_16F;
 }
 
 const char *input_name(void *)
@@ -264,7 +270,13 @@ void input_render(void *data, gs_effect_t *)
 	const int state = (s.mode << 4) | (reint ? 1 : 0) | ((int)s.matrix << 2);
 	if (state != f->last_state) {
 		f->last_state = state;
-		if (s.mode == ModeHlgAsSdr && !reint)
+		if (s.mode == ModeHlgAsSdr && ctx.input_space == GS_CS_SRGB)
+			obs_log(LOG_WARNING,
+				"[input:%s] 'HLG decoded as SDR' selected but the input is 8-bit SDR: it cannot carry HDR "
+				"values. Set the capture source's pixel format to 10-bit YUV. Passing it through "
+				"unchanged",
+				obs_source_get_name(f->context));
+		else if (s.mode == ModeHlgAsSdr && !reint)
 			obs_log(LOG_WARNING,
 				"[input:%s] 'HLG decoded as SDR' selected but the input is %s: OBS already decoded it "
 				"as HDR, passing it through unchanged",
@@ -323,10 +335,7 @@ void input_render(void *data, gs_effect_t *)
 		StateGuard guard;
 		gs_effect_t *e = f->effect;
 		gs_eparam_t *img = gs_effect_get_param_by_name(e, "image");
-		if (ctx.staging_format == GS_RGBA || ctx.staging_format == GS_BGRA || ctx.staging_format == GS_BGRX)
-			gs_effect_set_texture_srgb(img, tex); // 8-bit SDR: read linear, as OBS shows it
-		else
-			gs_effect_set_texture(img, tex);
+		gs_effect_set_texture(img, tex); // RGBA16F, linear
 		set_vec3(e, "corr0", sp.corr[0]);
 		set_vec3(e, "corr1", sp.corr[1]);
 		set_vec3(e, "corr2", sp.corr[2]);
@@ -335,7 +344,7 @@ void input_render(void *data, gs_effect_t *)
 		struct vec2 os;
 		vec2_set(&os, (float)ctx.width, (float)ctx.height);
 		gs_effect_set_vec2(gs_effect_get_param_by_name(e, "out_size"), &os);
-		gs_set_render_target_with_color_space(f->out, nullptr, GS_CS_709_EXTENDED);
+		gs_set_render_target_with_color_space(f->out, nullptr, GS_CS_SRGB_16F);
 		gs_set_viewport(0, 0, (int)ctx.width, (int)ctx.height);
 		gs_ortho(0.0f, (float)ctx.width, 0.0f, (float)ctx.height, -100.0f, 100.0f);
 		while (gs_effect_loop(e, "ReinterpretHLG"))
@@ -347,11 +356,11 @@ void input_render(void *data, gs_effect_t *)
 	hdrtk::draw_filter_result(f->out);
 }
 
+// Always the parent's space; see reinterpreting().
 enum gs_color_space input_color_space(void *data, size_t, const enum gs_color_space *)
 {
 	auto *f = static_cast<InputFilter *>(data);
-	const enum gs_color_space native = hdrtk::query_native_space(obs_filter_get_target(f->context));
-	return reinterpreting(snapshot(f), native) && f->effect ? GS_CS_709_EXTENDED : native;
+	return hdrtk::query_native_space(obs_filter_get_target(f->context));
 }
 
 } // namespace

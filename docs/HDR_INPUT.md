@@ -28,7 +28,18 @@ out    = rec2020_to_rec709(hlg_to_linear(E'2020, exponent) * peak / SDR white)
 peak   = min(HDR nominal peak, 1000);  exponent = 0.2 + 0.42 log10(peak / 1000)
 ```
 
-The output is `GS_CS_709_EXTENDED`, so the rest of the chain sees a normal HLG camera.
+**Output space (fix, 8 Nov).** The first build reported `GS_CS_709_EXTENDED` and the user
+saw no change. libobs asks the async *parent* source, not the filter chain, for a scene
+item's colour space (SRGB_16F here). Inside that SRGB_16F render, a filter that reports
+709_EXTENDED is tone-mapped back to SDR (`source_render` → `DrawTonemap`).
+
+The filter now reports the parent's space and writes the HDR result into it:
+- linear Rec.709 with 1.0 = SDR white, the same scale as 709_EXTENDED;
+- values above 1.0 kept;
+- SRGB_16F → 709_EXTENDED is a plain copy, so the values reach an HLG canvas unchanged.
+
+An 8-bit input (`GS_CS_SRGB`, DeckLink *8-bit YUV*) cannot carry values above 1.0, so the
+filter passes it through and logs a warning.
 
 **Accuracy (CPU, through RGBA16F storage).** The result matches OBS's HLG path to
 0.2% of the pixel's largest component. That is the fp16 storage error OBS's own path also
@@ -41,7 +52,7 @@ toolkit decodes HLG.
 ### Setup
 
 **DeckLink source:**
-- *Pixel Format*: 10-bit YUV;
+- *Pixel Format*: 10-bit YUV (required: 8-bit cannot carry HDR values);
 - *Color Space*: Rec. 2020 (or say what it is set to, in the filter);
 - *Color Range*: Default / Partial.
 
