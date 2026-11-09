@@ -37,6 +37,17 @@ Graphics vs video at the same white level (203 nits): an SDR 50 % grey sits at 4
 in Graphics (sRGB) and 38.5 nits in Video (BT.1886); the difference is the darker BT.1886
 toe, which is how SDR video is mastered.
 
+**Input** (9 Nov, after a user test): *Auto* acts only on SDR-tagged input (`GS_CS_SRGB`,
+`GS_CS_SRGB_16F`) so an HDR camera is never re-levelled. Some filters report an HDR space
+on an HDR canvas even when the content is SDR (seen with Composite Blur and Advanced Mask
+above it on a slide capture): in Auto the slide then passed through at OBS's own SDR white
+(203 nits = 75 %) whatever the white level was set to. *Treat input as SDR* processes any
+input; the maths is unchanged because those spaces also use 1.0 = SDR white (scRGB is
+rescaled by 80 / SDR white). Alternatively put SDR in HDR above such filters.
+
+The panel shows a fixed table of nits against HLG % for OBS's HDR peak and the values when
+it was opened (it is not refreshed while a slider moves, which would steal focus).
+
 Identity: Graphics at OBS's own SDR white level is what OBS already does; the filter skips
 it unless *Force shader render* is on (gate SI-1).
 

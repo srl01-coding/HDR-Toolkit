@@ -127,6 +127,16 @@ int main()
 				}
 			}
 		std::printf("float mirror: max relative error %.2e\n", maxerr);
+		// in_scale: scRGB input (1.0 = 80 nits) equals SDR-white units after scaling
+		sdrhdr::Params q;
+		q.obs_sdr_white = 203.0;
+		const sdrhdr::ShaderParams a1 = sdrhdr::make_shader_params(q, 1.0f);
+		const sdrhdr::ShaderParams a2 = sdrhdr::make_shader_params(q, 80.0f / 203.0f);
+		const float w1[4] = {1, 1, 1, 1}, w2[4] = {203.0f / 80.0f, 203.0f / 80.0f, 203.0f / 80.0f, 1};
+		float o1[4], o2[4];
+		sdrhdr::place_f(w1, a1, o1);
+		sdrhdr::place_f(w2, a2, o2);
+		CHECK(std::fabs(o1[0] - o2[0]) < 1e-6f, "in_scale scRGB %f %f", o1[0], o2[0]);
 		CHECK(maxerr < 2e-4, "mirror error %g", maxerr);
 	}
 	std::printf(failures ? "%d FAILURES\n" : "PASS\n", failures);

@@ -78,10 +78,11 @@ Vec3 convert(const Vec3 &v, const Params &p)
 	return {l[0] * gain * f, l[1] * gain * f, l[2] * gain * f};
 }
 
-ShaderParams make_shader_params(const Params &p)
+ShaderParams make_shader_params(const Params &p, float in_scale)
 {
 	ShaderParams s;
 	s.mode = p.mode;
+	s.in_scale = in_scale;
 	s.gain = (float)(p.white_nits / p.obs_sdr_white);
 	s.knee = (float)p.knee;
 	s.expand = (float)std::max(0.0, (p.peak_nits - p.white_nits) / p.white_nits);
@@ -93,7 +94,7 @@ void place_f(const float in[4], const ShaderParams &sp, float out[4])
 	const float a = in[3];
 	if (sp.mode == ModeGraphics) {
 		for (int i = 0; i < 3; i++)
-			out[i] = in[i] * sp.gain;
+			out[i] = in[i] * sp.in_scale * sp.gain;
 		out[3] = a;
 		return;
 	}
@@ -103,7 +104,7 @@ void place_f(const float in[4], const ShaderParams &sp, float out[4])
 	}
 	float e[3];
 	for (int i = 0; i < 3; i++)
-		e[i] = srgb_encode_f(std::max(in[i] / a, 0.0f));
+		e[i] = srgb_encode_f(std::max(in[i] / a * sp.in_scale, 0.0f));
 	const float m = std::max(e[0], std::max(e[1], e[2]));
 	float f = 1.0f;
 	if (sp.expand > 0.0f && m > sp.knee) {

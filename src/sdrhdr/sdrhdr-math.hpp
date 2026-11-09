@@ -63,11 +63,12 @@ Vec3 convert(const Vec3 &v, const Params &p); // double reference, straight (non
 // Float mirror of data/effects/hdr-sdr-in-hdr.effect PSPlace (keep in lock-step).
 struct ShaderParams {
 	int mode;
-	float gain;   // white_nits / obs_sdr_white
-	float knee;   // SDR signal (Video)
-	float expand; // (peak - white) / white, >= 0 (Video)
+	float in_scale; // native units -> OBS linear with 1.0 = SDR white (scRGB: 80 / SDR white)
+	float gain;     // white_nits / obs_sdr_white
+	float knee;     // SDR signal (Video)
+	float expand;   // (peak - white) / white, >= 0 (Video)
 };
-ShaderParams make_shader_params(const Params &p);
+ShaderParams make_shader_params(const Params &p, float in_scale = 1.0f);
 void place_f(const float in[4], const ShaderParams &sp, float out[4]); // premultiplied RGBA
 
 } // namespace sdrhdr

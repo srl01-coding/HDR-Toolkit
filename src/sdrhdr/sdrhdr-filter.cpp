@@ -54,6 +54,7 @@ struct Filter {
 	std::mutex mutex;
 	sh::Params params;
 	bool force_render = false;
+	bool treat_as_sdr = false; // input tagged HDR by an upstream filter, content SDR
 	std::atomic<uint64_t> generation{0};
 
 	// graphics thread only
@@ -81,9 +82,18 @@ bool sdr_input(enum gs_color_space s)
 	return s == GS_CS_SRGB || s == GS_CS_SRGB_16F;
 }
 
-bool active(const Filter *f, enum gs_color_space native)
+bool treat_as_sdr(Filter *f)
 {
-	return f->effect && canvas_hdr() && sdr_input(native);
+	std::lock_guard<std::mutex> lock(f->mutex);
+	return f->treat_as_sdr;
+}
+
+// Auto: only SDR-tagged input (protects HDR cameras). "Treat input as SDR": any input,
+// for SDR content behind filters that report an HDR space (seen 9 Nov with Composite
+// Blur / Advanced Mask: the source passed through at OBS's own SDR white).
+bool active(Filter *f, enum gs_color_space native)
+{
+	return f->effect && canvas_hdr() && (sdr_input(native) || treat_as_sdr(f));
 }
 
 sh::Params read_params(obs_data_t *s)
@@ -110,6 +120,7 @@ void update(void *data, obs_data_t *s)
 		std::lock_guard<std::mutex> lock(f->mutex);
 		f->params = read_params(s);
 		f->force_render = obs_data_get_bool(s, "force_render");
+		f->treat_as_sdr = obs_data_get_int(s, "input") == 1;
 	}
 	f->generation++;
 }
@@ -150,29 +161,43 @@ void defaults(obs_data_t *s)
 	obs_data_set_default_double(s, "peak_nits", 0.0);
 	obs_data_set_default_double(s, "knee", 75.0);
 	obs_data_set_default_bool(s, "force_render", false);
+	obs_data_set_default_int(s, "input", 0);
 }
 
+// Reference table on OBS's HDR peak, plus the values when the panel was opened (the panel
+// is not refreshed while a slider moves, so a live readout would go stale).
 std::string level_text(double white, double peak)
 {
 	const double lw = obs_get_video_hdr_nominal_peak_level();
-	char t[400];
-	snprintf(t, sizeof(t),
-		 "%s %.0f nits = %.1f%% HLG on this OBS's %.0f-nit HDR peak (BT.2408 reference white: "
-		 "203 nits = 75%%). OBS's global SDR white level is %.0f nits.",
-		 obs_module_text("SdrHdr.Level"), white, 100.0 * sh::nits_to_hlg(white, lw), lw,
-		 (double)obs_get_video_sdr_white_level());
-	std::string r = t;
+	std::string r = obs_module_text("SdrHdr.Level");
+	char t[160];
+	snprintf(t, sizeof(t), " (on this OBS's %.0f-nit HDR peak):", lw);
+	r += t;
+	const char *sep = " ";
+	for (double n : {100.0, 203.0, 300.0, 400.0, 600.0, 1000.0}) {
+		if (n > lw)
+			break;
+		snprintf(t, sizeof(t), "%s%.0f nits = %.0f%%%s", sep, n, 100.0 * sh::nits_to_hlg(n, lw),
+			 n == 203.0 ? " (BT.2408 reference white)" : "");
+		r += t;
+		sep = ", ";
+	}
+	r += ".";
+	snprintf(t, sizeof(t), " When this panel was opened: white %.0f nits = %.1f%% HLG", white,
+		 100.0 * sh::nits_to_hlg(white, lw));
+	r += t;
 	if (peak > white) {
-		snprintf(t, sizeof(t), " Expanded SDR 100%%: %.0f nits = %.1f%% HLG.", peak,
+		snprintf(t, sizeof(t), ", expanded SDR 100%% %.0f nits = %.1f%%", peak,
 			 100.0 * sh::nits_to_hlg(peak, lw));
 		r += t;
 	}
+	snprintf(t, sizeof(t), ". OBS's global SDR white level is %.0f nits.", (double)obs_get_video_sdr_white_level());
+	r += t;
 	return r;
 }
 
 // Refreshing the properties view on every slider step would steal focus while typing, so
-// only a mode change (which changes visibility) refreshes; the level text is updated in
-// place and shown in full on the next refresh.
+// only a mode change (which changes visibility) refreshes.
 bool level_modified(obs_properties_t *props, obs_property_t *prop, obs_data_t *settings)
 {
 	const sh::Params p = read_params(settings);
@@ -196,6 +221,11 @@ obs_properties_t *properties(void *data)
 	obs_property_list_add_int(p, obs_module_text("SdrHdr.Mode.Graphics"), sh::ModeGraphics);
 	obs_property_list_add_int(p, obs_module_text("SdrHdr.Mode.Video"), sh::ModeVideo);
 	obs_property_set_modified_callback(p, level_modified);
+	p = obs_properties_add_list(props, "input", obs_module_text("SdrHdr.Input"), OBS_COMBO_TYPE_LIST,
+				    OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(p, obs_module_text("SdrHdr.Input.Auto"), 0);
+	obs_property_list_add_int(p, obs_module_text("SdrHdr.Input.Sdr"), 1);
+	obs_property_set_long_description(p, obs_module_text("SdrHdr.Input.Help"));
 	p = obs_properties_add_float_slider(props, "white_nits", obs_module_text("SdrHdr.White"), 20.0, 1000.0, 1.0);
 	obs_property_float_set_suffix(p, " nits");
 	obs_property_set_modified_callback(p, level_modified);
@@ -278,8 +308,10 @@ void render(void *data, gs_effect_t *)
 		char line[256];
 		if (!canvas_hdr())
 			snprintf(line, sizeof(line), "SDR canvas: passing through");
-		else if (!sdr_input(ctx.input_space))
-			snprintf(line, sizeof(line), "input is %s, not SDR: passing through",
+		else if (!on)
+			snprintf(line, sizeof(line),
+				 "input is %s, not SDR: passing through (if the content is SDR behind a filter that "
+				 "reports HDR, set Input to 'Treat input as SDR')",
 				 hdrtk::space_name(ctx.input_space));
 		else
 			snprintf(
@@ -320,7 +352,8 @@ void render(void *data, gs_effect_t *)
 		obs_source_skip_video_filter(f->context);
 		return;
 	}
-	const sh::ShaderParams sp = sh::make_shader_params(p);
+	const sh::ShaderParams sp =
+		sh::make_shader_params(p, (float)(hdrtk::nits_per_unit(ctx.input_space) / p.obs_sdr_white));
 	const bool srgb_view = ctx.staging_format == GS_RGBA || ctx.staging_format == GS_BGRA ||
 			       ctx.staging_format == GS_BGRX;
 	{
@@ -332,6 +365,7 @@ void render(void *data, gs_effect_t *)
 		else
 			gs_effect_set_texture(img, tex);
 		gs_effect_set_int(gs_effect_get_param_by_name(e, "mode"), sp.mode);
+		gs_effect_set_float(gs_effect_get_param_by_name(e, "in_scale"), sp.in_scale);
 		gs_effect_set_float(gs_effect_get_param_by_name(e, "gain"), sp.gain);
 		gs_effect_set_float(gs_effect_get_param_by_name(e, "knee"), sp.knee);
 		gs_effect_set_float(gs_effect_get_param_by_name(e, "expand"), sp.expand);
