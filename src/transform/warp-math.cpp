@@ -37,6 +37,27 @@ float lanczos3(float x)
 	return 3.0f * std::sin(px) * std::sin(px / 3.0f) / (px * px);
 }
 
+// IEEE half rounding (round to nearest even on the mantissa; normal range), as an
+// RGBA16F render target stores the value
+float to_half(float v)
+{
+	if (v == 0.0f || !std::isfinite(v))
+		return v;
+	int e;
+	const float m = std::frexp(v, &e);
+	return std::ldexp(std::nearbyint(m * 2048.0f) / 2048.0f, e);
+}
+
+float catmull_rom(float x)
+{
+	x = std::fabs(x);
+	if (x < 1.0f)
+		return (1.5f * x - 2.5f) * x * x + 1.0f;
+	if (x < 2.0f)
+		return ((-0.5f * x + 2.5f) * x - 4.0f) * x + 2.0f;
+	return 0.0f;
+}
+
 float snap(float v)
 {
 	const float r = std::round(v);
@@ -96,7 +117,9 @@ Image shader_encode_pq(const Image &in, float pq_k)
 	Image o = in;
 	for (size_t i = 0; i < o.px.size(); i += 4)
 		for (int c = 0; c < 3; c++)
-			o.px[i + (size_t)c] = enc1(in.px[i + (size_t)c], pq_k);
+			o.px[i + (size_t)c] = to_half(enc1(in.px[i + (size_t)c], pq_k)); // RGBA16F target
+	for (size_t i = 3; i < o.px.size(); i += 4)
+		o.px[i] = to_half(o.px[i]);
 	return o;
 }
 
@@ -173,6 +196,45 @@ std::array<float, 4> shader_sample_hq(const WarpShader &s, const Image &img, con
 		const float *t = img.at(cl((int)qx, nw), cl((int)qy, nh));
 		return {t[0], t[1], t[2], t[3]};
 	}
+	if (w1 == 1.0f && w2 == 1.0f) {
+		// fast path: separable Lanczos-3 on the PQ copy only (mirror of the shader branch)
+		const int bx = (int)std::floor(qx) - 2, by = (int)std::floor(qy) - 2;
+		float wx[6], wy[6], sx = 0.0f, sy = 0.0f;
+		for (int a = 0; a < 6; a++) {
+			wx[a] = lanczos3(qx - (float)(bx + a));
+			wy[a] = lanczos3(qy - (float)(by + a));
+			sx += wx[a];
+			sy += wy[a];
+		}
+		float acc[4] = {0, 0, 0, 0}, lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+		for (int jj = 0; jj < 6; jj++) {
+			const int yy = cl(by + jj, nh);
+			float row[4] = {0, 0, 0, 0};
+			for (int ii = 0; ii < 6; ii++) {
+				const float *t = pq.at(cl(bx + ii, nw), yy);
+				for (int c = 0; c < 4; c++)
+					row[c] += wx[ii] * t[c];
+				if ((ii == 2 || ii == 3) && (jj == 2 || jj == 3))
+					for (int c = 0; c < 3; c++) {
+						lo[c] = std::min(lo[c], t[c]);
+						hi[c] = std::max(hi[c], t[c]);
+					}
+			}
+			for (int c = 0; c < 4; c++)
+				acc[c] += wy[jj] * row[c];
+		}
+		std::array<float, 4> o;
+		for (int c = 0; c < 4; c++) {
+			float r = acc[c] / (sx * sy);
+			if (c < 3) {
+				r = r + (std::clamp(r, lo[c], hi[c]) - r) * s.antiring;
+				o[(size_t)c] = dec1(r, s.pq_k);
+			} else {
+				o[3] = std::clamp(r, 0.0f, 1.0f);
+			}
+		}
+		return o;
+	}
 	const float ex = 3.0f * (std::fabs(f00) + std::fabs(f01));
 	const float ey = 3.0f * (std::fabs(f01) + std::fabs(f11));
 	const int x0 = (int)std::floor(qx - ex) + 1;
@@ -213,6 +275,50 @@ std::array<float, 4> shader_sample_hq(const WarpShader &s, const Image &img, con
 	}
 	out[3] = std::clamp(accl[3] * inv, 0.0f, 1.0f);
 	return out;
+}
+
+std::array<float, 4> shader_sample_bicubic(const WarpShader &s, const Image &img, int ox, int oy)
+{
+	const std::array<float, 3> m = shader_map_px(s, (float)ox + 0.5f, (float)oy + 0.5f);
+	if (m[2] < 0.5f)
+		return {0, 0, 0, 0};
+	const float qx = snap(m[0] * s.in_size[0] - 0.5f), qy = snap(m[1] * s.in_size[1] - 0.5f);
+	const int nw = (int)s.in_size[0], nh = (int)s.in_size[1];
+	auto cl = [](int v, int n) {
+		return std::min(n - 1, std::max(0, v));
+	};
+	const int bx = (int)std::floor(qx) - 1, by = (int)std::floor(qy) - 1;
+	float wx[4], wy[4];
+	for (int a = 0; a < 4; a++) {
+		wx[a] = catmull_rom(qx - (float)(bx + a));
+		wy[a] = catmull_rom(qy - (float)(by + a));
+	}
+	float acc[4] = {0, 0, 0, 0}, lo[4], hi[4];
+	for (int c = 0; c < 4; c++) {
+		lo[c] = 1e30f;
+		hi[c] = -1e30f;
+	}
+	for (int jj = 0; jj < 4; jj++) {
+		const int yy = cl(by + jj, nh);
+		float row[4] = {0, 0, 0, 0};
+		for (int ii = 0; ii < 4; ii++) {
+			const float *t = img.at(cl(bx + ii, nw), yy);
+			for (int c = 0; c < 4; c++)
+				row[c] += wx[ii] * t[c];
+			if ((ii == 1 || ii == 2) && (jj == 1 || jj == 2))
+				for (int c = 0; c < 4; c++) {
+					lo[c] = std::min(lo[c], t[c]);
+					hi[c] = std::max(hi[c], t[c]);
+				}
+		}
+		for (int c = 0; c < 4; c++)
+			acc[c] += wy[jj] * row[c];
+	}
+	std::array<float, 4> o;
+	for (int c = 0; c < 4; c++)
+		o[(size_t)c] = acc[c] + (std::clamp(acc[c], lo[c], hi[c]) - acc[c]) * s.antiring;
+	o[3] = std::clamp(o[3], 0.0f, 1.0f);
+	return o;
 }
 
 std::array<float, 4> shader_sample_linear(const WarpShader &s, const Image &img, int ox, int oy)

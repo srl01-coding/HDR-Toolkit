@@ -41,7 +41,7 @@ uniform float pre_scale = 1.0;           // fill scale
 uniform float2 pre_size = {1920.0, 1080.0};
 
 // Schema 3: output size and resampling
-uniform texture2d pq_image;              // PQ-encoded copy of image (SampleHQ)
+uniform texture2d pq_image;              // PQ-encoded copy of image (SampleHQ), RGBA16F
 uniform float2 out_size = {1920.0, 1080.0};
 uniform float2 in_size = {1920.0, 1080.0};
 uniform float2 res_scale = {1.0, 1.0};   // output pixels per frame pixel
@@ -314,6 +314,40 @@ float4 PSSampleHQ(VertInOut vert_in) : TARGET
 		int2 t = int2(clamp(int(q.x), 0, nw - 1), clamp(int(q.y), 0, nh - 1));
 		return image.Load(int3(t, 0));
 	}
+	if (w1 == 1.0 && w2 == 1.0) {
+		// Fast path (the picture is not reduced here): F = I, so the 2-D kernel is the
+		// product of two 1-D Lanczos-3 weight sets; tdom = 0, so only the PQ copy is read
+		// (it carries alpha), and the anti-ringing range is the centre 2 x 2 of the taps.
+		int bx = int(floor(q.x)) - 2, by = int(floor(q.y)) - 2;
+		float wx[6];
+		float wy[6];
+		float sx = 0.0, sy = 0.0;
+		for (int a = 0; a < 6; a++) {
+			wx[a] = lanczos3(q.x - float(bx + a));
+			wy[a] = lanczos3(q.y - float(by + a));
+			sx += wx[a];
+			sy += wy[a];
+		}
+		float4 acc = float4(0.0, 0.0, 0.0, 0.0);
+		float3 lo = float3(1e30, 1e30, 1e30);
+		float3 hi = float3(-1e30, -1e30, -1e30);
+		for (int jj = 0; jj < 6; jj++) {
+			int yy = clamp(by + jj, 0, nh - 1);
+			float4 row = float4(0.0, 0.0, 0.0, 0.0);
+			for (int ii = 0; ii < 6; ii++) {
+				float4 t = pq_image.Load(int3(clamp(bx + ii, 0, nw - 1), yy, 0));
+				row += wx[ii] * t;
+				if ((ii == 2 || ii == 3) && (jj == 2 || jj == 3)) {
+					lo = min(lo, t.rgb);
+					hi = max(hi, t.rgb);
+				}
+			}
+			acc += wy[jj] * row;
+		}
+		float4 r = acc / (sx * sy);
+		r.rgb = r.rgb + (clamp(r.rgb, lo, hi) - r.rgb) * antiring;
+		return float4(dec1(r.r), dec1(r.g), dec1(r.b), saturate(r.a));
+	}
 	float ex = 3.0 * (abs(f00) + abs(f01));
 	float ey = 3.0 * (abs(f01) + abs(f11));
 	int x0 = int(floor(q.x - ex)) + 1;
@@ -353,6 +387,63 @@ float4 PSSampleHQ(VertInOut vert_in) : TARGET
 	float3 dp = float3(dec1(rp.r), dec1(rp.g), dec1(rp.b));
 	float3 rgb = lerp(dp, rl.rgb, tdom);
 	return float4(rgb, saturate(rl.a));
+}
+
+float catmull_rom(float x)
+{
+	x = abs(x);
+	if (x < 1.0)
+		return (1.5 * x - 2.5) * x * x + 1.0;
+	if (x < 2.0)
+		return ((-0.5 * x + 2.5) * x - 4.0) * x + 2.0;
+	return 0.0;
+}
+
+// Sharp (bicubic): Catmull-Rom over 4 x 4 texels at the mapped point, linear light,
+// anti-ringing towards the range of the centre 2 x 2. No pre-pass, constant cost.
+float4 PSSampleBicubic(VertInOut vert_in) : TARGET
+{
+	float2 c = floor(vert_in.uv * out_size) + 0.5;
+	float3 m = map_px(c);
+	if (m.z < 0.5)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	float2 q = m.xy * in_size - 0.5;
+	q = float2(snap(q.x), snap(q.y));
+	int nw = int(in_size.x), nh = int(in_size.y);
+	int bx = int(floor(q.x)) - 1, by = int(floor(q.y)) - 1;
+	float wx[4];
+	float wy[4];
+	for (int a = 0; a < 4; a++) {
+		wx[a] = catmull_rom(q.x - float(bx + a));
+		wy[a] = catmull_rom(q.y - float(by + a));
+	}
+	float4 acc = float4(0.0, 0.0, 0.0, 0.0);
+	float4 lo = float4(1e30, 1e30, 1e30, 1e30);
+	float4 hi = float4(-1e30, -1e30, -1e30, -1e30);
+	for (int jj = 0; jj < 4; jj++) {
+		int yy = clamp(by + jj, 0, nh - 1);
+		float4 row = float4(0.0, 0.0, 0.0, 0.0);
+		for (int ii = 0; ii < 4; ii++) {
+			float4 t = image.Load(int3(clamp(bx + ii, 0, nw - 1), yy, 0));
+			row += wx[ii] * t;
+			if ((ii == 1 || ii == 2) && (jj == 1 || jj == 2)) {
+				lo = min(lo, t);
+				hi = max(hi, t);
+			}
+		}
+		acc += wy[jj] * row;
+	}
+	acc = acc + (clamp(acc, lo, hi) - acc) * antiring;
+	return float4(acc.rgb, saturate(acc.a));
+}
+
+technique SampleBicubic
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSSampleBicubic(vert_in);
+	}
 }
 
 technique SampleLinear

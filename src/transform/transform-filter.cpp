@@ -30,7 +30,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
  *
  * Schema 3 (user-directed 8 Nov 2026): output size after the corner pin (HDR Scale's
  * Fill / Fit / Stretch / desqueeze / pan layout), so rotation + distortion + corner pin +
- * resize are one resample; and High quality sampling (warp-math.hpp; default): 2-D
+ * resize are one resample; Sharp (bicubic) and High quality sampling (warp-math.hpp; opt-in): 2-D
  * Lanczos-3 at the mapped point, widened where the warp reduces, PQ domain with
  * anti-ringing where it enlarges. Bilinear and Point remain selectable.
  *
@@ -64,11 +64,12 @@ using hdrtk::quad::PreWarpUniforms;
 using hdrtk::quad::Quad;
 
 // 2: pre-warp keys (neutral defaults; schema 1 unchanged)
-// 3: output size keys (neutral defaults) and sampling_mode High quality (new default)
+// 3: output size keys (neutral defaults); sampling_mode 2 = High quality, 3 = Sharp (bicubic);
+//    default stays Bilinear
 constexpr int kSchemaVersion = 3;
 
 enum WarpModel : int { WarpBilinear = 0, WarpProjective = 1 };
-enum Sampling : int { SampleBilinear = 0, SamplePoint = 1, SampleHQ = 2 };
+enum Sampling : int { SampleBilinear = 0, SamplePoint = 1, SampleHQ = 2, SampleBicubic = 3 };
 
 struct CornerKey {
 	const char *canon_x, *canon_y, *ui_x, *ui_y, *label;
@@ -177,8 +178,8 @@ void transform_update(void *data, obs_data_t *settings)
 	if (warp != WarpBilinear && warp != WarpProjective)
 		warp = WarpBilinear; // unknown future value: fail safe
 	int sampling = (int)obs_data_get_int(settings, "sampling_mode");
-	if (sampling != SampleBilinear && sampling != SamplePoint && sampling != SampleHQ)
-		sampling = SampleHQ;
+	if (sampling != SampleBilinear && sampling != SamplePoint && sampling != SampleHQ && sampling != SampleBicubic)
+		sampling = SampleBilinear;
 
 	const Quad q = read_quad(settings);
 	const hdrtk::quad::Validation v = hdrtk::quad::validate(q, warp == WarpProjective);
@@ -288,8 +289,10 @@ void transform_defaults(obs_data_t *settings)
 {
 	obs_data_set_default_int(settings, "schema_version", kSchemaVersion);
 	obs_data_set_default_int(settings, "warp_model", WarpBilinear);
-	obs_data_set_default_int(settings, "sampling_mode", SampleHQ);
-	obs_data_set_default_double(settings, "antiring", 80.0);
+	// Bilinear stays the default: High quality overloaded a GTX 1650 Super with rotation +
+	// distortion (user, 9 Nov 2026); the better modes are opt-in per source.
+	obs_data_set_default_int(settings, "sampling_mode", SampleBilinear);
+	obs_data_set_default_double(settings, "antiring", 100.0);
 	obs_data_set_default_int(settings, "out_w", 0);
 	obs_data_set_default_int(settings, "out_h", 0);
 	obs_data_set_default_int(settings, "out_fit", hdrtk::scale::FitFill);
@@ -451,8 +454,9 @@ obs_properties_t *transform_properties(void *data)
 
 	p = obs_properties_add_list(props, "sampling_mode", obs_module_text("Transform.Sampling"), OBS_COMBO_TYPE_LIST,
 				    OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(p, obs_module_text("Transform.Sampling.HQ"), SampleHQ);
 	obs_property_list_add_int(p, obs_module_text("Transform.Sampling.Bilinear"), SampleBilinear);
+	obs_property_list_add_int(p, obs_module_text("Transform.Sampling.Bicubic"), SampleBicubic);
+	obs_property_list_add_int(p, obs_module_text("Transform.Sampling.HQ"), SampleHQ);
 	obs_property_list_add_int(p, obs_module_text("Transform.Sampling.Point"), SamplePoint);
 	p = obs_properties_add_float_slider(props, "antiring", obs_module_text("Transform.AntiRing"), 0.0, 100.0, 1.0);
 	obs_property_float_set_suffix(p, "%");
@@ -584,7 +588,10 @@ void transform_render(void *data, gs_effect_t *)
 		char line[192];
 		snprintf(line, sizeof(line), "output %ux%u from %ux%u (scale x %.4f y %.4f), sampling %s", l.out_w,
 			 l.out_h, ctx.width, ctx.height, l.x.scale, l.y.scale,
-			 s.sampling == SampleHQ ? "high quality" : (s.sampling == SamplePoint ? "point" : "bilinear"));
+			 s.sampling == SampleHQ        ? "high quality"
+			 : s.sampling == SampleBicubic ? "sharp (bicubic)"
+			 : s.sampling == SamplePoint   ? "point"
+						       : "bilinear");
 		if (f->last_layout != line) {
 			f->last_layout = line;
 			obs_log(LOG_INFO, "[transform] '%s': %s", obs_source_get_name(f->context), line);
@@ -621,7 +628,7 @@ void transform_render(void *data, gs_effect_t *)
 	gs_texture_t *in = hdrtk::capture_filter_input(f->context, f->input, ctx);
 	const bool hq = s.sampling == SampleHQ;
 	if (!in || !ensure_tex(f->out, f->out_w, f->out_h, l.out_w, l.out_h, GS_RGBA16F) ||
-	    (hq && !ensure_tex(f->pq, f->pq_w, f->pq_h, ctx.width, ctx.height, GS_RGBA32F))) {
+	    (hq && !ensure_tex(f->pq, f->pq_w, f->pq_h, ctx.width, ctx.height, GS_RGBA16F))) {
 		f->out_valid = false;
 		obs_source_skip_video_filter(f->context);
 		return;
@@ -683,7 +690,10 @@ void transform_render(void *data, gs_effect_t *)
 			run(f->out, l.out_w, l.out_h, "SampleHQ");
 		} else {
 			set_all(l.out_w, l.out_h);
-			run(f->out, l.out_w, l.out_h, s.sampling == SamplePoint ? "SamplePoint" : "SampleLinear");
+			const char *tech = s.sampling == SamplePoint     ? "SamplePoint"
+					   : s.sampling == SampleBicubic ? "SampleBicubic"
+									 : "SampleLinear";
+			run(f->out, l.out_w, l.out_h, tech);
 		}
 	}
 	f->out_valid = true;

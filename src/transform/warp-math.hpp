@@ -28,12 +28,18 @@ with this program. If not, see <https://www.gnu.org/licenses/>
  * Stretch / desqueeze / pan behave the same). One resample covers pre-warp, corner pin
  * and resize.
  *
+ * SampleBicubic (9 Nov, after HQ overloaded a GTX 1650 Super with rotation + distortion):
+ * Catmull-Rom 4 x 4 at the mapped point, linear light, anti-ringing towards the centre
+ * 2 x 2; no pre-pass, constant cost.
+ *
  * SampleHQ, per output pixel: the local footprint J (source texels per output pixel)
  * from forward differences of the map; footprint widths w = clamp(singular value, 1, 2)
  * along J J^T's eigenvectors; a 2-D Lanczos-3 product kernel on F^-1 (q - texel) in the
  * source grid (exact interpolation where the warp does not reduce, widened area filter
  * where it does). Enlarging: PQ domain with anti-ringing over the 2 x 2 nearest texels;
  * reducing: linear light; smoothstep(1.001, 1.5, largest singular value) blends the two.
+ * Where nothing is reduced (both widths 1) a separable fast path reads only the RGBA16F PQ
+ * copy (36 taps, 12 kernel evaluations).
  */
 
 #include "quad-math.hpp"
@@ -68,9 +74,11 @@ struct Image {
 
 float shader_pq_encode(float y);
 float shader_pq_decode(float e);
-Image shader_encode_pq(const Image &in, float pq_k); // PSEncodePQ
+Image shader_encode_pq(const Image &in, float pq_k); // PSEncodePQ (into RGBA16F: half-rounded)
 // PSSampleHQ for output pixel (ox, oy)
 std::array<float, 4> shader_sample_hq(const WarpShader &s, const Image &img, const Image &pq, int ox, int oy);
+// PSSampleBicubic: Catmull-Rom 4 x 4, linear light, anti-ringing (centre 2 x 2)
+std::array<float, 4> shader_sample_bicubic(const WarpShader &s, const Image &img, int ox, int oy);
 // PSSampleLinear (bilinear texture filtering, clamp addressing) for comparison
 std::array<float, 4> shader_sample_linear(const WarpShader &s, const Image &img, int ox, int oy);
 

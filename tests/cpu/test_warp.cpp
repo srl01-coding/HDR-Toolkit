@@ -93,12 +93,12 @@ static WarpShader shader(int in_w, int in_h, const Quad &q, bool projective, con
 
 // RMS error of HQ and of bilinear against an analytic image f evaluated at the exact mapped point.
 struct Err {
-	double hq = 0, lin = 0;
+	double hq = 0, lin = 0, bic = 0;
 };
 static Err compare(const WarpShader &s, const Image &img, const std::function<float(double, double)> &f, int margin)
 {
 	const Image pq = shader_encode_pq(img, s.pq_k);
-	double eh = 0, el = 0;
+	double eh = 0, el = 0, eb = 0;
 	int n = 0;
 	for (int y = margin; y < (int)s.out_size[1] - margin; y++)
 		for (int x = margin; x < (int)s.out_size[0] - margin; x++) {
@@ -108,11 +108,13 @@ static Err compare(const WarpShader &s, const Image &img, const std::function<fl
 			const double ref = f(m[0] * s.in_size[0], m[1] * s.in_size[1]);
 			const auto h = shader_sample_hq(s, img, pq, x, y);
 			const auto l = shader_sample_linear(s, img, x, y);
+			const auto b = shader_sample_bicubic(s, img, x, y);
+			eb += (b[0] - ref) * (b[0] - ref);
 			eh += (h[0] - ref) * (h[0] - ref);
 			el += (l[0] - ref) * (l[0] - ref);
 			n++;
 		}
-	return {std::sqrt(eh / n), std::sqrt(el / n)};
+	return {std::sqrt(eh / n), std::sqrt(el / n), std::sqrt(eb / n)};
 }
 
 int main()
@@ -132,6 +134,12 @@ int main()
 					exact = exact && shader_sample_hq(s, img, pq, x, y)[0] == img.at(x, y)[0];
 		}
 		CHECK(exact, "HQ identity not exact");
+		bool bexact = true;
+		const WarpShader sb = shader(48, 27, Quad(), false, PreWarp(), no_resize);
+		for (int y = 0; y < 27; y++)
+			for (int x = 0; x < 48; x++)
+				bexact = bexact && shader_sample_bicubic(sb, img, x, y)[0] == img.at(x, y)[0];
+		CHECK(bexact, "bicubic identity not exact");
 	}
 	// 2. Constant HDR field stays constant under rotation + keystone + resize.
 	{
@@ -153,7 +161,16 @@ int main()
 				if (h[3] > 0.999f)
 					e = std::max(e, std::fabs(h[0] / 4.926 - 1.0));
 			}
-		CHECK(e < 3e-4, "constant field error %g", e);
+		double eb = 0;
+		for (int y = 6; y < 48; y++)
+			for (int x = 6; x < 108; x++) {
+				const auto b = shader_sample_bicubic(s, img, x, y);
+				if (b[3] > 0.999f)
+					eb = std::max(eb, std::fabs(b[0] / 4.926 - 1.0));
+			}
+		std::printf("constant 1000-nit field: max error HQ %.2e (PQ copy in half precision), bicubic %.2e\n", e,
+			    eb);
+		CHECK(e < 3e-3 && eb < 1e-5, "constant field error %g %g", e, eb);
 	}
 	// 3. Sharpness and accuracy: a smooth band-limited image (period 5 px), rotated 5 deg and
 	//    resized x1.1875 (the church canvas), HQ vs bilinear against the exact image.
@@ -172,8 +189,10 @@ int main()
 		WarpShader sl = s;
 		const Err e = compare(sl, img, f, 8);
 		std::printf(
-			"period-5 pattern, rotate 5 deg + x1.1875: RMS error HQ %.4f, bilinear %.4f (amplitude 0.5)\n",
-			e.hq, e.lin);
+			"period-5 pattern, rotate 5 deg + x1.1875: RMS error HQ %.4f, bicubic %.4f, bilinear %.4f (amplitude "
+			"0.5)\n",
+			e.hq, e.bic, e.lin);
+		CHECK(e.bic < 0.75 * e.lin && e.bic > e.hq, "bicubic should sit between: %f", e.bic);
 		CHECK(e.hq < 0.5 * e.lin, "HQ not clearly more accurate than bilinear: %f vs %f", e.hq, e.lin);
 		// keystone only, near 1:1
 		Quad q;
@@ -181,8 +200,9 @@ int main()
 		q.b = {0.97, 0.0};
 		const WarpShader s2 = shader(96, 54, q, true, PreWarp(), no_resize);
 		const Err e2 = compare(s2, img, f, 8);
-		std::printf("period-5 pattern, keystone 3%% (projective): RMS error HQ %.4f, bilinear %.4f\n", e2.hq,
-			    e2.lin);
+		std::printf(
+			"period-5 pattern, keystone 3%% (projective): RMS error HQ %.4f, bicubic %.4f, bilinear %.4f\n",
+			e2.hq, e2.bic, e2.lin);
 		CHECK(e2.hq < 0.5 * e2.lin, "keystone: HQ %f vs bilinear %f", e2.hq, e2.lin);
 	}
 	// 4. Reducing: corner pin to 50 % on 1-pixel stripes (Nyquist): HQ averages, bilinear aliases.
@@ -221,6 +241,23 @@ int main()
 				hi = std::max(hi, (double)h[0] * 203.0);
 			}
 		std::printf("26|1000-nit edge rotated 3 deg (HQ): min %.2f, max %.1f nits\n", lo, hi);
+		for (float ar : {0.8f, 1.0f}) {
+			WarpShader sb = s;
+			sb.antiring = ar;
+			double blo = 1e9, bhi = 0;
+			for (int y = 10; y < 44; y++)
+				for (int x = 10; x < 86; x++) {
+					const auto b = shader_sample_bicubic(sb, img, x, y);
+					blo = std::min(blo, (double)b[0] * 203.0);
+					bhi = std::max(bhi, (double)b[0] * 203.0);
+				}
+			std::printf("  bicubic, anti-ringing %.0f%%: min %.2f, max %.1f nits\n", 100.0 * ar, blo, bhi);
+			if (ar == 1.0f)
+				CHECK(blo >= 26.0 * (1 - 1e-5) && bhi <= 1000.0 * (1 + 1e-5),
+				      "bicubic full anti-ring range");
+			else
+				CHECK(blo > 0.0, "bicubic at 80%% goes negative: %f", blo);
+		}
 		CHECK(lo > 20.0 && hi < 1100.0, "edge ringing %f %f", lo, hi);
 	}
 	// 6. Outside the quad: transparent; Fit borders transparent.

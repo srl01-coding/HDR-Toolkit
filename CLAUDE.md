@@ -77,8 +77,10 @@ canvas) so libobs never applies DrawTonemap on top. SDR output clipped 0..1 by d
 C40, SC-1..4). Church canvas 4560x2160 (19:9; YouTube live needs 2160 high, no letterbox). Filter sets its own
 size (get_width/height); item at 1:1. Enlarging = PQ domain + anti-ring, reducing = linear, no clamp.
 8 Nov (user): HDR Transform schema 3: output size (scale::compute_layout after the corner pin; one resample) +
-High quality sampling default (2-D Lanczos-3, footprint-widened when reducing, PQ + anti-ring when enlarging;
-hdr-transform.effect SampleHQ/EncodePQ/map_px mirrored by warp-math.cpp - lock-step; C41, T13-T16). Render now
+High quality sampling (2-D Lanczos-3, footprint-widened when reducing, PQ + anti-ring when enlarging;
+hdr-transform.effect SampleHQ/SampleBicubic/EncodePQ/map_px mirrored by warp-math.cpp - lock-step; C41, T13-T17).
+9 Nov: HQ as default overloaded the user's GTX 1650 Super (rotation + pincushion: 8.5 % frames missed) -> default
+back to Bilinear; added Sharp (bicubic, 16 taps, constant cost); HQ separable fast path + RGBA16F PQ copy; anti-ring 100. Render now
 via filter-io capture + own targets (per-frame dedupe); effect params reset per technique - set before each pass.
 9 Nov (user): SDR in HDR (src/sdrhdr; hdr-sdr-in-hdr.effect mirrored by place_f - lock-step; docs/SDR_IN_HDR.md;
 C42, SI-1..4). Active only on HDR canvas + SDR input; output reported SRGB_16F (values >1 kept). Expansion curve is
