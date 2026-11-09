@@ -80,4 +80,7 @@ size (get_width/height); item at 1:1. Enlarging = PQ domain + anti-ring, reducin
 High quality sampling default (2-D Lanczos-3, footprint-widened when reducing, PQ + anti-ring when enlarging;
 hdr-transform.effect SampleHQ/EncodePQ/map_px mirrored by warp-math.cpp - lock-step; C41, T13-T16). Render now
 via filter-io capture + own targets (per-frame dedupe); effect params reset per technique - set before each pass.
+9 Nov (user): SDR in HDR (src/sdrhdr; hdr-sdr-in-hdr.effect mirrored by place_f - lock-step; docs/SDR_IN_HDR.md;
+C42, SI-1..4). Active only on HDR canvas + SDR input; output reported SRGB_16F (values >1 kept). Expansion curve is
+NOT a standard (documented as such).
 Windows compile check: python3 -m ziglang c++ -target x86_64-windows-gnu -c FILE -o out.o.

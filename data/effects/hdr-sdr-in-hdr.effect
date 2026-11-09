@@ -1,0 +1,61 @@
+// HDR Toolkit - SDR in HDR (hdr_toolkit_sdr_in_hdr_v1): per-source placement of SDR in HDR
+// Copyright (C) 2026 srl01-coding, GPL-2.0-or-later
+//
+// Graphics: OBS linear SDR x gain (gain = white nits / OBS SDR white level).
+// Video: BT.1886 display light of the SDR signal x gain, optional quadratic highlight
+// expansion above a knee on max(R,G,B) (ratio-preserving). Premultiplied in and out.
+// Mirrored in src/sdrhdr/sdrhdr-math.cpp place_f() - keep in lock-step.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 out_size;
+
+uniform int mode = 0;      // 0 graphics, 1 video
+uniform float gain = 0.6767;
+uniform float knee = 0.75;
+uniform float expand = 0.0;
+
+struct VertInOut {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertInOut VSDefault(VertInOut vert_in)
+{
+	VertInOut vert_out;
+	vert_out.pos = mul(float4(vert_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = vert_in.uv;
+	return vert_out;
+}
+
+float srgb_encode_ch(float v)
+{
+	return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+}
+
+float4 PSPlace(VertInOut vert_in) : TARGET
+{
+	float4 c = image.Load(int3(int2(vert_in.uv * out_size), 0));
+	if (mode == 0)
+		return float4(c.rgb * gain, c.a);
+	if (!(c.a > 0.0))
+		return float4(0.0, 0.0, 0.0, 0.0);
+	float3 v = max(c.rgb / c.a, 0.0);
+	float3 e = float3(srgb_encode_ch(v.r), srgb_encode_ch(v.g), srgb_encode_ch(v.b));
+	float m = max(e.r, max(e.g, e.b));
+	float f = 1.0;
+	if (expand > 0.0 && m > knee) {
+		float t = (m - knee) / (1.0 - knee);
+		f = 1.0 + expand * t * t;
+	}
+	return float4(pow(e, 2.4) * gain * f * c.a, c.a);
+}
+
+technique Place
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader  = PSPlace(vert_in);
+	}
+}

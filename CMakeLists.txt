@@ -51,6 +51,9 @@ target_sources(
     src/scale/scale-math.cpp
     src/scale/scale-math.hpp
     src/sdr/sdr-filter.cpp
+    src/sdrhdr/sdrhdr-filter.cpp
+    src/sdrhdr/sdrhdr-math.cpp
+    src/sdrhdr/sdrhdr-math.hpp
     src/sdr/sdr-math.cpp
     src/sdr/sdr-math.hpp
     src/sharpen/sharpen-filter.cpp

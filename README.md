@@ -19,6 +19,10 @@ HDR-safe video filters for OBS Studio, working in OBS's linear HDR space without
   HDR-safe resampling: perceptual-domain Lanczos with anti-ringing, so enlarged cameras get
   no black halos next to bright lights (OBS's own Lanczos rings in linear light). See
   `docs/HDR_SCALE.md`.
+* **SDR in HDR** - per-source level for SDR sources in an HDR programme (lyrics and slides
+  at BT.2408 graphics white, 203 nits = 75 % HLG, instead of OBS's single global SDR white
+  level), with a BT.1886 video mode and optional highlight expansion for SDR footage. See
+  `docs/SDR_IN_HDR.md`.
 * **SDR Conversion** - shows the SDR version of an HDR picture (BT.2446-1 Method A
   broadcast down-mapping, or OBS's own tone map for comparison), with a split compare: a
   pre-broadcast check on an HLG canvas, or a proper HDR to SDR conversion for an HLG camera
