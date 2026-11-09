@@ -147,13 +147,8 @@ jobs:
             ${{ github.workspace }}/.deps/*.tar.gz
           key: ${{ runner.os }}-deps-${{ hashFiles('buildspec.json') }}
 
-      - name: Build Plugin 🧱
-        uses: ./.github/actions/build-plugin
-        with:
-          target: macos-universal
-          config: ${{ needs.check-event.outputs.config }}
-          codesign: ${{ fromJSON(needs.check-event.outputs.codesign) }}
-          codesignIdent: ${{ steps.codesign.outputs.codesignIdent }}
+      - name: Fetch Dependencies (with retries) 📦
+        run: python3 .github/scripts/fetch_deps.py macos
 
       - uses: actions/cache/save@v4
         if: github.event_name != 'pull_request' && steps.deps-cache.outputs.cache-hit != 'true'
@@ -163,6 +158,14 @@ jobs:
             ${{ github.workspace }}/.deps/*.tar.xz
             ${{ github.workspace }}/.deps/*.tar.gz
           key: ${{ runner.os }}-deps-${{ hashFiles('buildspec.json') }}
+
+      - name: Build Plugin 🧱
+        uses: ./.github/actions/build-plugin
+        with:
+          target: macos-universal
+          config: ${{ needs.check-event.outputs.config }}
+          codesign: ${{ fromJSON(needs.check-event.outputs.codesign) }}
+          codesignIdent: ${{ steps.codesign.outputs.codesignIdent }}
 
       - name: Package Plugin 📀
         uses: ./.github/actions/package-plugin
@@ -312,11 +315,9 @@ jobs:
             ${{ github.workspace }}/.deps/*.tar.gz
           key: ${{ runner.os }}-deps-${{ hashFiles('buildspec.json') }}
 
-      - name: Build Plugin 🧱
-        uses: ./.github/actions/build-plugin
-        with:
-          target: x64
-          config: ${{ needs.check-event.outputs.config }}
+      - name: Fetch Dependencies (with retries) 📦
+        run: python .github/scripts/fetch_deps.py windows-x64
+        shell: pwsh
 
       - uses: actions/cache/save@v4
         if: github.event_name != 'pull_request' && steps.deps-cache.outputs.cache-hit != 'true'
@@ -326,6 +327,12 @@ jobs:
             ${{ github.workspace }}/.deps/*.tar.xz
             ${{ github.workspace }}/.deps/*.tar.gz
           key: ${{ runner.os }}-deps-${{ hashFiles('buildspec.json') }}
+
+      - name: Build Plugin 🧱
+        uses: ./.github/actions/build-plugin
+        with:
+          target: x64
+          config: ${{ needs.check-event.outputs.config }}
 
       - name: Package Plugin 📀
         uses: ./.github/actions/package-plugin
