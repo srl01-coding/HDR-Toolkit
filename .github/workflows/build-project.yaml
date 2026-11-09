@@ -134,6 +134,19 @@ jobs:
           notarizationUser: ${{ secrets.MACOS_NOTARIZATION_USERNAME }}
           notarizationPassword: ${{ secrets.MACOS_NOTARIZATION_PASSWORD }}
 
+      # Downloaded dependency archives (obs-studio sources, obs-deps, Qt) are cached by the
+      # buildspec hash: buildspec_common.cmake skips the download when the archive exists, so a
+      # GitHub release-download outage (504s, seen repeatedly on 8-9 Nov 2026) no longer fails
+      # the build once the cache is warm.
+      - uses: actions/cache/restore@v4
+        id: deps-cache
+        with:
+          path: |
+            ${{ github.workspace }}/.deps/*.zip
+            ${{ github.workspace }}/.deps/*.tar.xz
+            ${{ github.workspace }}/.deps/*.tar.gz
+          key: ${{ runner.os }}-deps-${{ hashFiles('buildspec.json') }}
+
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
         with:
@@ -141,6 +154,15 @@ jobs:
           config: ${{ needs.check-event.outputs.config }}
           codesign: ${{ fromJSON(needs.check-event.outputs.codesign) }}
           codesignIdent: ${{ steps.codesign.outputs.codesignIdent }}
+
+      - uses: actions/cache/save@v4
+        if: github.event_name != 'pull_request' && steps.deps-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ${{ github.workspace }}/.deps/*.zip
+            ${{ github.workspace }}/.deps/*.tar.xz
+            ${{ github.workspace }}/.deps/*.tar.gz
+          key: ${{ runner.os }}-deps-${{ hashFiles('buildspec.json') }}
 
       - name: Package Plugin 📀
         uses: ./.github/actions/package-plugin
@@ -277,11 +299,33 @@ jobs:
           "pluginName=${ProductName}" >> $env:GITHUB_OUTPUT
           "pluginVersion=${ProductVersion}" >> $env:GITHUB_OUTPUT
 
+      # Downloaded dependency archives (obs-studio sources, obs-deps, Qt) are cached by the
+      # buildspec hash: buildspec_common.cmake skips the download when the archive exists, so a
+      # GitHub release-download outage (504s, seen repeatedly on 8-9 Nov 2026) no longer fails
+      # the build once the cache is warm.
+      - uses: actions/cache/restore@v4
+        id: deps-cache
+        with:
+          path: |
+            ${{ github.workspace }}/.deps/*.zip
+            ${{ github.workspace }}/.deps/*.tar.xz
+            ${{ github.workspace }}/.deps/*.tar.gz
+          key: ${{ runner.os }}-deps-${{ hashFiles('buildspec.json') }}
+
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
         with:
           target: x64
           config: ${{ needs.check-event.outputs.config }}
+
+      - uses: actions/cache/save@v4
+        if: github.event_name != 'pull_request' && steps.deps-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ${{ github.workspace }}/.deps/*.zip
+            ${{ github.workspace }}/.deps/*.tar.xz
+            ${{ github.workspace }}/.deps/*.tar.gz
+          key: ${{ runner.os }}-deps-${{ hashFiles('buildspec.json') }}
 
       - name: Package Plugin 📀
         uses: ./.github/actions/package-plugin
