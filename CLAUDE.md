@@ -20,7 +20,10 @@ Program denoise: `docs/denoise/BRIEF_v1.2.md` governs (its own P0-P5); design no
 ## Environment
 - No OBS/GPU here. Build = GitHub Actions (template), push to `main`.
 - Syntax check locally against OBS 32.2.2 headers; CPU tests in `tests/cpu`.
-- Format: clang-format 19 (`.clang-format`), gersemi for CMake (CI check-format on main).
+- Format: clang-format 19 (`.clang-format`), gersemi for CMake (CI check-format on main). CI's gersemi
+  (obsproject/tools) formats like gersemi 0.17.1, not current pip gersemi: check CMake with a 0.17.1 venv.
+- CI: .github/scripts/fetch_deps.py pre-fetches buildspec deps (+ OBS sources' x86 obs-deps) with retries;
+  archives cached (key deps-v2); buildspec_common copies *-deps-* into the OBS sources' .deps (9 Nov, 504s).
 
 ## Status
 P0 done (G0, N1 qualitative, N3b observed in OBS 32.2.2). P1 Corner Pin implemented
