@@ -62,6 +62,15 @@ function(_setup_obs_studio)
     set(_cmake_extra "-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}")
   endif()
 
+  # The OBS sources' own configure downloads the same obs-deps archives into their own .deps.
+  # Hand it the archives already fetched here (CI pre-fetches them with retries), so a GitHub
+  # release-download outage cannot fail the build at that step (seen 9 Nov 2026).
+  file(GLOB _obs_dep_archives LIST_DIRECTORIES FALSE "${dependencies_dir}/*-deps-*")
+  if(_obs_dep_archives)
+    file(MAKE_DIRECTORY "${dependencies_dir}/${_obs_destination}/.deps")
+    file(COPY ${_obs_dep_archives} DESTINATION "${dependencies_dir}/${_obs_destination}/.deps")
+  endif()
+
   message(STATUS "Configure ${label} (${arch})")
   execute_process(
     COMMAND
@@ -148,8 +157,7 @@ function(_check_dependencies)
 
     if(EXISTS "${dependencies_dir}/.dependency_${dependency}_${arch}.sha256")
       file(
-        READ
-        "${dependencies_dir}/.dependency_${dependency}_${arch}.sha256"
+        READ "${dependencies_dir}/.dependency_${dependency}_${arch}.sha256"
         OBS_DEPENDENCY_${dependency}_${arch}_HASH
       )
     endif()
