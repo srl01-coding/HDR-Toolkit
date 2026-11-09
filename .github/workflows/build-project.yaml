@@ -145,7 +145,7 @@ jobs:
             ${{ github.workspace }}/.deps/*.zip
             ${{ github.workspace }}/.deps/*.tar.xz
             ${{ github.workspace }}/.deps/*.tar.gz
-          key: ${{ runner.os }}-deps-${{ hashFiles('buildspec.json') }}
+          key: ${{ runner.os }}-deps-v2-${{ hashFiles('buildspec.json', '.github/scripts/fetch_deps.py') }}
 
       - name: Fetch Dependencies (with retries) 📦
         run: python3 .github/scripts/fetch_deps.py macos
@@ -157,7 +157,7 @@ jobs:
             ${{ github.workspace }}/.deps/*.zip
             ${{ github.workspace }}/.deps/*.tar.xz
             ${{ github.workspace }}/.deps/*.tar.gz
-          key: ${{ runner.os }}-deps-${{ hashFiles('buildspec.json') }}
+          key: ${{ runner.os }}-deps-v2-${{ hashFiles('buildspec.json', '.github/scripts/fetch_deps.py') }}
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
@@ -313,7 +313,7 @@ jobs:
             ${{ github.workspace }}/.deps/*.zip
             ${{ github.workspace }}/.deps/*.tar.xz
             ${{ github.workspace }}/.deps/*.tar.gz
-          key: ${{ runner.os }}-deps-${{ hashFiles('buildspec.json') }}
+          key: ${{ runner.os }}-deps-v2-${{ hashFiles('buildspec.json', '.github/scripts/fetch_deps.py') }}
 
       - name: Fetch Dependencies (with retries) 📦
         run: python .github/scripts/fetch_deps.py windows-x64
@@ -326,7 +326,7 @@ jobs:
             ${{ github.workspace }}/.deps/*.zip
             ${{ github.workspace }}/.deps/*.tar.xz
             ${{ github.workspace }}/.deps/*.tar.gz
-          key: ${{ runner.os }}-deps-${{ hashFiles('buildspec.json') }}
+          key: ${{ runner.os }}-deps-v2-${{ hashFiles('buildspec.json', '.github/scripts/fetch_deps.py') }}
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin

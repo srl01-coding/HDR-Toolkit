@@ -7,6 +7,11 @@ that already exist in .deps/. This script downloads them first, with retries and
 exponential back-off, and verifies each SHA-256 against buildspec.json, so CMake finds
 complete archives and never downloads. File names follow cmake/<platform>/buildspec.cmake.
 
+On Windows, configuring the OBS sources also builds a 32-bit slice that needs the x86
+obs-deps archive; its version and SHA-256 come from the OBS sources' own buildspec.json
+(read from the source archive), and cmake/common/buildspec_common.cmake copies every
+fetched *-deps-* archive into the OBS sources' .deps before configuring them.
+
 Usage: fetch_deps.py windows-x64 | macos
 """
 
@@ -16,6 +21,7 @@ import os
 import sys
 import time
 import urllib.request
+import zipfile
 
 NAMES = {
     "windows-x64": {
@@ -87,6 +93,26 @@ def main():
             continue
         url = f"{d['baseUrl']}/{name}" if dep == "obs-studio" else f"{d['baseUrl']}/{version}/{name}"
         fetch(url, dest, expected)
+    if platform == "windows-x64":
+        fetch_obs_x86(spec)
+
+
+def fetch_obs_x86(spec):
+    """The x86 obs-deps archive the OBS sources' configure downloads for its 32-bit slice."""
+    obs_ver = spec["dependencies"]["obs-studio"]["version"]
+    with zipfile.ZipFile(os.path.join(".deps", f"{obs_ver}.zip")) as z:
+        obs_spec = json.loads(z.read(f"obs-studio-{obs_ver}/buildspec.json"))
+    d = obs_spec["dependencies"]["prebuilt"]
+    expected = d.get("hashes", {}).get("windows-x86")
+    if not expected:
+        print("OBS sources need no x86 obs-deps archive", flush=True)
+        return
+    name = f"windows-deps-{d['version']}-x86.zip"
+    dest = os.path.join(".deps", name)
+    if os.path.exists(dest) and sha256(dest) == expected:
+        print(f"{name}: cached", flush=True)
+        return
+    fetch(f"{d['baseUrl']}/{d['version']}/{name}", dest, expected)
 
 
 if __name__ == "__main__":
